@@ -1,0 +1,45 @@
+services:
+  payment-service-back:
+    image: payment-service-api:1.0
+    container_name: payment-service-back
+    restart: unless-stopped
+
+    environment:
+      - GENERIC_TIMEZONE=Asia/Tehran
+      - TZ=Asia/Tehran
+
+      - ConnectionStrings__PaymentDb=Password=ap_os_alc01;Persist Security Info=True;User ID=ap_os_alc01_user;Initial Catalog=paymentgateway;Data Source=db-sq-dlc01,1433;TrustServerCertificate=True;MultipleActiveResultSets=true;
+
+      - RABBITMQ_HOST=ap-rq-alc01
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=ap-os-alc01_user
+      - RABBITMQ_PASSWORD=ap-os-alc01
+
+      - ASPNETCORE_URLS=http://+:8080
+      - APP_NAME=Payment-Service
+      - ASPNETCORE_ENVIRONMENT=Production
+
+    networks:
+      - corp_app
+      - corp_db
+      - corp_monitor
+      - corp_proxy
+
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=corp_proxy
+      - traefik.http.routers.payment-service-back.rule=Host(`test-payment.saipacorp.com`)
+      - traefik.http.routers.payment-service-back.entrypoints=websecure
+      - traefik.http.routers.payment-service-back.tls=true
+      - traefik.http.routers.payment-service-back.service=payment-service-back
+      - traefik.http.services.payment-service-back.loadbalancer.server.port=8080
+
+networks:
+  corp_app:
+    external: true
+  corp_db:
+    external: true
+  corp_monitor:
+    external: true
+  corp_proxy:
+    external: true

@@ -1,0 +1,94 @@
+```gitignore
+## Ignore Visual Studio temporary files
+.vs/
+.vscode/
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+build/
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+
+## User-specific files
+*.user
+*.rsuser
+*.suo
+*.userosscache
+*.sln.docstates
+.env
+
+## Rider
+.idea/
+
+## JetBrains Rider
+*.sln.iml
+
+## Visual Studio Code
+.history/
+
+## NuGet
+*.nupkg
+packages/
+!**/packages/build/
+*.snupkg
+
+## .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## ASP.NET Scaffolding
+ScaffoldingReadMe.txt
+
+## Entity Framework
+*.mdf
+*.ldf
+
+## Logs
+*.log
+logs/
+
+## Publish output
+publish/
+wwwroot/dist/
+wwwroot/lib/
+
+## Temporary files
+tmp/
+temp/
+
+## OS files
+.DS_Store
+Thumbs.db
+
+## Secrets
+appsettings.Development.json
+appsettings.Local.json
+secrets.json
+
+## Azure
+PublishProfiles/
+*.Publish.xml
+
+## Test Results
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+## npm / node (اگر فرانت داخل پروژه داری)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+## Docker
+docker-compose.override.yml
+
+## Generated files
+Generated/
+```
