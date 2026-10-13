@@ -8,6 +8,7 @@ using PaymentService.Application.Services;
 using PaymentService.Infrastructure.Gateways;
 using PaymentService.Infrastructure.Gateways.AsanPardakht;
 using PaymentService.Infrastructure.Gateways.Mellat;
+using PaymentService.Infrastructure.Gateways.Parsian;
 using PaymentService.Infrastructure.Gateways.Shaparak;
 using PaymentService.Infrastructure.Messaging;
 using PaymentService.Infrastructure.Persistence;
@@ -38,38 +39,21 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(callbackOptions);
 
-        // --- سرویس هماهنگ‌کننده اصلی ---
         services.AddScoped<PaymentOrchestrationService>();
 
-        // --- Factory: خودکار همه IPaymentGateway های ثبت‌شده زیر را جمع می‌کند ---
         services.AddScoped<IPaymentGatewayFactory, PaymentGatewayFactory>();
 
-        // ===================================================================
-        // ثبت درگاه ملت
-        // ===================================================================
-        services.Configure<MellatOptions>(configuration.GetSection(MellatOptions.SectionName));
-        services.AddSingleton(sp => sp.GetRequiredService<IOptions<MellatOptions>>().Value);
 
-        services.AddHttpClient<MellatSoapClient>()
-            .ConfigurePrimaryHttpMessageHandler(CreatePrimaryHandlerFactory(configuration));
+        // ===================== درگاه‌ها (هر کدام در فایل خودش) =====================
+        services.AddMellatGateway(configuration);
+        services.AddAsanPardakhtGateway(configuration);
+        services.AddParsianGateway(configuration);
+        // درگاه بعدی: services.AddXxxGateway(configuration);
 
-        services.AddScoped<IPaymentGateway, MellatGateway>();
-
-        // ===================================================================
-        // ثبت درگاه آسان پرداخت
-        // ===================================================================
-        services.Configure<AsanPardakhtOptions>(configuration.GetSection(AsanPardakhtOptions.SectionName));
-        services.AddSingleton(sp => sp.GetRequiredService<IOptions<AsanPardakhtOptions>>().Value);
-
-        services.AddHttpClient<AsanPardakhtApiClient>()
-            .ConfigurePrimaryHttpMessageHandler(CreatePrimaryHandlerFactory(configuration));
-
-        services.AddScoped<IPaymentGateway, AsanPardakhtGateway>();
-
-        // ===================================================================
-        // تنظیمات شاپرک
+        // تنظیمات شاپرک (مشترک؛ آسان‌پرداخت از آن استفاده می‌کند)
         services.Configure<ShaparakOptions>(configuration.GetSection(ShaparakOptions.SectionName));
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<ShaparakOptions>>().Value);
+        
         // ===================================================================
         // RabbitMQ Publisher
         // ===================================================================
@@ -81,22 +65,5 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<OutboxProcessorBackgroundService>();
 
         return services;
-    }
-
-    private static Func<HttpMessageHandler> CreatePrimaryHandlerFactory(IConfiguration configuration)
-    {
-        return () =>
-        {
-            var handler = new HttpClientHandler();
-
-            // فقط برای تست لوکال! این پرچم هرگز نباید در appsettings.json اصلی یا appsettings.Production.json ست بشه.
-            if (configuration.GetValue<bool>("PaymentGateways:DisableSslValidationForLocalTestingOnly"))
-            {
-                handler.ServerCertificateCustomValidationCallback =
-                    HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
-            }
-
-            return handler;
-        };
     }
 }

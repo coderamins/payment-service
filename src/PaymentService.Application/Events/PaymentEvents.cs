@@ -1,15 +1,15 @@
 ﻿namespace PaymentService.Application.Events;
 
 public record PaymentSettledEvent(
-    Guid TransactionId,
-    string OrderId,
+    long TransactionId,
+    long OrderId,
     long AmountInRials,
     string GatewayProvider,
     string? ReferenceCode,
     DateTime SettledAtUtc);
 
-public record PaymentReservedEvent(
-    Guid TransactionId,
-    string OrderId,
+public record PaymentReversedEvent(
+    long TransactionId,
+    long OrderId,
     long AmountInRials,
-    DateTime ReservedAtUtc);
+    DateTime ReversedAtUtc);

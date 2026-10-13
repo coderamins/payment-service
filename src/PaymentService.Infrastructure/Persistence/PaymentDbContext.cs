@@ -34,6 +34,7 @@ public class PaymentDbContext : DbContext
         {
             entity.ToTable("PaymentTransaction");
             entity.HasKey(t => t.Id);
+            entity.Property(t => t.Id).UseIdentityColumn(seed: 100_000_000, increment: 1);
 
             entity.Property(t => t.OrderId).HasMaxLength(64).IsRequired();
             entity.Property(t => t.RequestingService).HasMaxLength(64).IsRequired();

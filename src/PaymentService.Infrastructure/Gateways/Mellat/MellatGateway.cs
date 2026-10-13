@@ -33,9 +33,8 @@ public class MellatGateway : IPaymentGateway
         CancellationToken cancellationToken = default)
     {
         var now = DateTime.Now;
-        // orderId نزد ملت باید عددی و در هر ترمینال یکتا باشد؛ از timestamp+رندوم برای یکتایی استفاده می‌شود
-        // چون OrderId داخلی سیستم فروش ممکن است رشته غیرعددی باشد.
-        var mellatOrderId = GenerateNumericOrderId(transaction.Id);
+
+        var mellatOrderId = transaction.Id.ToString();
 
         var rawResult = await _soapClient.BpPayRequestAsync(
             orderId: mellatOrderId,
@@ -84,7 +83,7 @@ public class MellatGateway : IPaymentGateway
         PaymentTransaction transaction,
         CancellationToken cancellationToken = default)
     {
-        var mellatOrderId = GenerateNumericOrderId(transaction.Id);
+        var mellatOrderId = transaction.Id.ToString();
         var resultCode = await _soapClient.BpVerifyRequestAsync(
             mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId!, cancellationToken);
 
@@ -96,7 +95,7 @@ public class MellatGateway : IPaymentGateway
         PaymentTransaction transaction,
         CancellationToken cancellationToken = default)
     {
-        var mellatOrderId = GenerateNumericOrderId(transaction.Id);
+        var mellatOrderId = transaction.Id.ToString();
         var resultCode = await _soapClient.BpSettleRequestAsync(
             mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId!, cancellationToken);
 
@@ -108,24 +107,12 @@ public class MellatGateway : IPaymentGateway
         PaymentTransaction transaction,
         CancellationToken cancellationToken = default)
     {
-        var mellatOrderId = GenerateNumericOrderId(transaction.Id);
+        var mellatOrderId = transaction.Id.ToString();
         var resultCode = await _soapClient.BpReversalRequestAsync(
             mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId!, cancellationToken);
 
         var isSuccess = resultCode == SuccessResultCode;
         return new GatewayOperationResult(isSuccess, resultCode, isSuccess ? null : MapErrorMessage(resultCode));
-    }
-
-    /// <summary>
-    /// ملت orderId عددی می‌خواهد؛ از بخشی از Guid تراکنش یک عدد یکتا و پایدار می‌سازیم
-    /// (پایدار یعنی برای یک تراکنش مشخص همیشه همان عدد تولید می‌شود - چون در Verify/Settle
-    /// دوباره به همین مقدار نیاز داریم).
-    /// </summary>
-    private static string GenerateNumericOrderId(Guid transactionId)
-    {
-        var bytes = transactionId.ToByteArray();
-        var number = BitConverter.ToUInt32(bytes, 0) % 1_000_000_000;
-        return number.ToString();
     }
 
     /// <summary>کد های خطای بانک ملت </summary>

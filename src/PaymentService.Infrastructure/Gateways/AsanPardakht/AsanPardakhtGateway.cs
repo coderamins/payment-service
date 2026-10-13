@@ -35,13 +35,11 @@ public class AsanPardakhtGateway : IPaymentGateway
         string? payerNationalCode = null,
         CancellationToken cancellationToken = default)
     {
-        var callbackWithInvoice = $"{callbackUrl.TrimEnd('/')}/{transaction.GatewayInvoiceId}";
-
         var additionalData = BuildAdditionalData(payerNationalCode);
 
         var (isSuccess, token, statusCode) = await _apiClient.RequestTokenAsync(
-            transaction.GatewayInvoiceId, transaction.AmountInRials,
-            callbackWithInvoice, additionalData, cancellationToken);
+            transaction.Id, transaction.AmountInRials,
+            callbackUrl, additionalData, cancellationToken);
 
         if (!isSuccess || string.IsNullOrWhiteSpace(token))
             return new GatewayRequestResult(false, null, null, MapTokenError(statusCode));
@@ -132,7 +130,7 @@ public class AsanPardakhtGateway : IPaymentGateway
         if (long.TryParse(transaction.GatewaySaleReferenceId, out var stored) && stored > 0)
             return stored;
 
-        var tranResult = await _apiClient.GetTransactionResultAsync(transaction.GatewayInvoiceId, ct);
+        var tranResult = await _apiClient.GetTransactionResultAsync(transaction.Id, ct);
         return tranResult?.PayGateTranId > 0 ? tranResult.PayGateTranId : null;
     }
 

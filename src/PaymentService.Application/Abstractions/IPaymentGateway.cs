@@ -57,4 +57,10 @@ public record GatewayCallbackParseResult(
 public record GatewayOperationResult(
     bool IsSuccess, 
     string? ResultCode,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    string? MaskedCardNumber = null);
+
+//string? MaskedCardNumber = null
+//اینجا این اضافه شد چون پارسیان موقع 
+//callback
+//کارت ماسک شده را نمیدهد و اینکار رو موقع Confirm میده

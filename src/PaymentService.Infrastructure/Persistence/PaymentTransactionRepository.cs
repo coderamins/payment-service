@@ -13,19 +13,24 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
         _context = context;
     }
 
-    public async Task AddAsync(PaymentTransaction transaction, CancellationToken cancellationToken = default)
+    public async Task AddAsync(
+        PaymentTransaction transaction, 
+        CancellationToken cancellationToken = default)
         => await _context.PaymentTransaction.AddAsync(transaction, cancellationToken);
 
-    public Task<PaymentTransaction?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public Task<PaymentTransaction?> GetByIdAsync(
+        long id, CancellationToken cancellationToken = default)
         => _context.PaymentTransaction.FirstOrDefaultAsync(t => t.Id == id, cancellationToken);
 
-    public Task<PaymentTransaction?> GetByOrderIdAsync(string orderId, CancellationToken cancellationToken = default)
+    public Task<PaymentTransaction?> GetByOrderIdAsync(
+        long orderId, CancellationToken cancellationToken = default)
         => _context.PaymentTransaction
             .Where(t => t.OrderId == orderId)
             .OrderByDescending(t => t.CreatedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
 
-    public Task UpdateAsync(PaymentTransaction transaction, CancellationToken cancellationToken = default)
+    public Task UpdateAsync(PaymentTransaction transaction, 
+        CancellationToken cancellationToken = default)
     {
         _context.PaymentTransaction.Update(transaction);
         return Task.CompletedTask;

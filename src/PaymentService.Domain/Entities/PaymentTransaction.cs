@@ -4,12 +4,12 @@ namespace PaymentService.Domain.Entities;
 
 public class PaymentTransaction
 {
-    public Guid Id { get; private set; }
+    public long Id { get; private set; }
 
     /// <summary>
     /// شماره سفارش/فاکتور در سیستم مبدا (مثلاً شماره سفارش خرید خودرو).
     /// </summary>
-    public string OrderId { get; private set; } = default!;
+    public long OrderId { get; private set; } = default!;
 
     /// <summary>
     /// سرویس استفاده کننده
@@ -30,13 +30,6 @@ public class PaymentTransaction
     /// <summary>SaleReferenceId که بانک بعد از تراکنش موفق برمی‌گرداند (برای پیگیری‌های بعدی)</summary>
     public string? GatewaySaleReferenceId { get; private set; }
 
-    /// <summary>
-    /// شناسه فاکتور عددی یکتایی که به درگاه اعلام می‌شود.
-    /// برخی درگاه‌ها (مانند آسان پرداخت) الزام می‌کنند این مقدار عددی و هرگز تکراری نباشد،
-    /// و در مراحل بعدی (استعلام، تایید، تسویه) دوباره به همین مقدار نیاز است.
-    /// </summary>
-    public long GatewayInvoiceId { get; private set; }
-
     /// <summary>شماره کارت با فرمت ماسک‌شده (مثلاً 603799******1234) که بانک برمی‌گرداند</summary>
     public string? MaskedCardNumber { get; private set; }
 
@@ -54,14 +47,14 @@ public class PaymentTransaction
     private PaymentTransaction() { } 
 
     public static PaymentTransaction Create(
-        string orderId,
+        long orderId,
         string requestingService,
         long amountInRials,
         string returnUrl,
         GatewayProvider gatewayProvider)
     {
-        if (string.IsNullOrWhiteSpace(orderId))
-            throw new ArgumentException("شماره سفارش نمی‌تواند خالی باشد", nameof(orderId));
+        //if (orderId==null)
+        //    throw new ArgumentException("شماره سفارش نمی‌تواند خالی باشد", nameof(orderId));
 
         if (amountInRials <= 0)
             throw new ArgumentException("مبلغ پرداخت باید بزرگتر از صفر باشد", nameof(amountInRials));
@@ -69,15 +62,9 @@ public class PaymentTransaction
         if (string.IsNullOrWhiteSpace(returnUrl) || !Uri.IsWellFormedUriString(returnUrl, UriKind.Absolute))
             throw new ArgumentException("آدرس بازگشت (ReturnUrl) نامعتبر است", nameof(returnUrl));
 
-
-        var invoiceId = long.Parse(
-            DateTime.UtcNow.ToString("yyMMddHHmmssfff") + Random.Shared.Next(100, 999));
-
         return new PaymentTransaction
         {
-            Id = Guid.NewGuid(),
             OrderId = orderId,
-            GatewayInvoiceId = invoiceId,
             RequestingService = requestingService,
             AmountInRials = amountInRials,
             ReturnUrl = returnUrl,
@@ -85,6 +72,12 @@ public class PaymentTransaction
             Status = PaymentStatus.Created,
             CreatedAtUtc = DateTime.UtcNow,
         };
+    }
+
+    public void SetMaskedCardNumber(string maskedCardNumber)
+    {
+        MaskedCardNumber = maskedCardNumber;
+        UpdatedAtUtc = DateTime.UtcNow;
     }
 
     public void MarkRedirectedToGateway(string gatewayRefId)

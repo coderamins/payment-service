@@ -9,11 +9,11 @@ public interface IPaymentTransactionRepository
         CancellationToken cancellationToken = default);
 
     Task<PaymentTransaction?> GetByIdAsync(
-        Guid id, 
+        long id, 
         CancellationToken cancellationToken = default);
 
     Task<PaymentTransaction?> GetByOrderIdAsync(
-        string orderId, CancellationToken 
+        long orderId, CancellationToken 
         cancellationToken = default);
 
     Task UpdateAsync(
