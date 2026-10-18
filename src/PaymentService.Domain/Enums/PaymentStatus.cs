@@ -14,7 +14,7 @@ public enum PaymentStatus
     /// <summary>بانک نتیجه پرداخت را برگردانده (Callback دریافت شد) - در انتظار Verify</summary>
     CallbackReceived = 2,
 
-    /// <summary>تراکنش با موفقیت Verify شده ولی هنوز Settle (تسویه) نشده</summary>
+    /// <summary>پرداخت نزد بانک تأیید شده ولی هنوز Settle نشده؛ منتظر تصمیم سرویس مصرف‌کننده (settle یا reverse)</summary>
     Verified = 3,
 
     /// <summary>تراکنش با موفقیت کامل تسویه شده - پایان موفق چرخه</summary>

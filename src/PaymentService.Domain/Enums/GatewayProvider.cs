@@ -7,9 +7,9 @@ public enum GatewayProvider
 {
     Mellat = 1,
     AsanPardakht = 2,
+    Parsian = 3,
 
     // نمونه درگاه‌های آینده :
-    // Parsian = 3,
     // Zarinpal = 4,
     // Melli = 5,
 }

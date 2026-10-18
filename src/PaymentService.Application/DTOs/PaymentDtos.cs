@@ -53,8 +53,4 @@ public record PaymentStatusResult(
 );
 
 
-/// <summary>نتیجه ثبت بازگشت از درگاه (هنوز Verify/Settle انجام نشده)</summary>
-public record GatewayCallbackResult(
-    bool IsPaid, 
-    long TransactionId, 
-    string? ErrorMessage);
+    

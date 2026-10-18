@@ -81,91 +81,95 @@ public class PaymentOrchestrationService
     }
 
     /// <summary>
-    /// فاز اول: فقط نتیجه برگشت از بانک را ثبت می‌کند. Verify/Settle اینجا انجام نمی‌شود.
+    /// بازگشت از بانک: ثبت نتیجه + Verify. تسویه (Settle) اینجا انجام نمی‌شود؛
+    /// سرویس مصرف‌کننده بعد از بررسی شرایط، settle یا reverse را صدا می‌زند.
     /// </summary>
-    public async Task<GatewayCallbackResult> HandleGatewayCallbackAsync(
+    public async Task<ConfirmPaymentResult> ConfirmCallbackAsync(
         GatewayCallbackData callback,
         CancellationToken cancellationToken = default)
     {
-        var transaction = await _repository.GetByIdAsync(callback.TransactionId, cancellationToken)
+        var transaction = await _repository
+            .GetByIdAsync(callback.TransactionId, cancellationToken)
             ?? throw new NotFoundException($"تراکنشی با شناسه {callback.TransactionId} یافت نشد");
 
-        // callback تکراری (refresh صفحه یا ارسال مجدد بانک) نباید وضعیت را خراب کند
+        // callback تکراری (refresh یا ارسال مجدد بانک) نباید دوباره پردازش شود
         if (transaction.Status != PaymentStatus.RedirectedToGateway)
         {
-            var alreadyPaid = transaction.Status is PaymentStatus.CallbackReceived
-                or PaymentStatus.Verified or PaymentStatus.Settled;
-            return new GatewayCallbackResult(alreadyPaid, transaction.Id, null);
+            var paid = transaction.Status is PaymentStatus.Verified or PaymentStatus.Settled;
+            return new ConfirmPaymentResult(
+                paid, transaction.Id,
+                paid ? transaction.GatewaySaleReferenceId : null,
+                transaction.MaskedCardNumber,
+                paid ? null : transaction.FailureReason ?? "این تراکنش قبلاً پردازش شده است");
         }
 
         var gateway = _gatewayFactory.Resolve(transaction.GatewayProvider);
         var parsed = gateway.ParseCallback(callback.RawParameters);
 
-        transaction.MarkCallbackReceived(
-            parsed.ResultCode, parsed.SaleReferenceId, parsed.MaskedCardNumber);
+        transaction.MarkCallbackReceived(parsed.ResultCode, parsed.SaleReferenceId, parsed.MaskedCardNumber);
 
         if (!parsed.IsSuccessfulPayment)
+        {
             transaction.MarkCanceledByUser();
+            await _repository.UpdateAsync(transaction, cancellationToken);
+            await _repository.SaveChangesAsync(cancellationToken);
+            return new ConfirmPaymentResult(
+                false, transaction.Id, null, null,
+                parsed.ErrorMessage ?? "پرداخت توسط کاربر لغو شد");
+        }
 
+        var verifyResult = await gateway.VerifyAsync(transaction, cancellationToken);
+
+        if (!verifyResult.IsSuccess)
+        {
+            transaction.MarkFailed(verifyResult.ErrorMessage ?? "خطا در تایید تراکنش نزد بانک", verifyResult.ResultCode);
+            await _repository.UpdateAsync(transaction, cancellationToken);
+            await _repository.SaveChangesAsync(cancellationToken);
+            return new ConfirmPaymentResult(
+                false, transaction.Id, null, transaction.MaskedCardNumber, verifyResult.ErrorMessage);
+        }
+
+        transaction.MarkVerified();   // پرداخت واقعی است؛ منتظر تصمیم سرویس مصرف‌کننده
         await _repository.UpdateAsync(transaction, cancellationToken);
         await _repository.SaveChangesAsync(cancellationToken);
 
-        return new GatewayCallbackResult(
-            parsed.IsSuccessfulPayment, transaction.Id,
-            parsed.IsSuccessfulPayment ? null : parsed.ErrorMessage ?? "پرداخت توسط کاربر لغو شد");
+        return new ConfirmPaymentResult(
+            true, transaction.Id, transaction.GatewaySaleReferenceId, transaction.MaskedCardNumber, null);
     }
 
     /// <summary>
-    /// فاز دوم: بعد از اینکه سرویس مصرف‌کننده بررسی موجودی را انجام داد، صدا زده می‌شود.
+    /// تسویه نهایی؛ فقط بعد از اینکه سرویس مصرف‌کننده شرایط کسب‌وکار را تأیید کرد صدا زده می‌شود.
     /// </summary>
-    public async Task<ConfirmPaymentResult> ConfirmPaymentAsync(
+    public async Task<ConfirmPaymentResult> SettlePaymentAsync(
         long transactionId,
         CancellationToken cancellationToken = default)
     {
         var transaction = await _repository.GetByIdAsync(transactionId, cancellationToken)
             ?? throw new NotFoundException($"تراکنشی با شناسه {transactionId} یافت نشد");
 
-        // فراخوانی تکراری: نتیجه قبلی را برگردان
+        // فراخوانی تکراری: همان نتیجه قبلی
         if (transaction.Status == PaymentStatus.Settled)
             return new ConfirmPaymentResult(true, transaction.Id,
                 transaction.GatewaySaleReferenceId, transaction.MaskedCardNumber, null);
 
-        // Verified هم مجاز است تا اگر Settle خطا داد بشود دوباره تلاش کرد
-        if (transaction.Status is not (PaymentStatus.CallbackReceived or PaymentStatus.Verified))
+        if (transaction.Status != PaymentStatus.Verified)
             throw new ConflictException(
-                $"تراکنش در وضعیت {transaction.Status} است و امکان تایید ندارد");
+                $"تراکنش در وضعیت {transaction.Status} است و فقط تراکنش Verify شده قابل تسویه است");
 
         var gateway = _gatewayFactory.Resolve(transaction.GatewayProvider);
-
-        if (transaction.Status == PaymentStatus.CallbackReceived)
-        {
-            var verifyResult = await gateway.VerifyAsync(transaction, cancellationToken);
-            if (!verifyResult.IsSuccess)
-            {
-                transaction.MarkFailed(verifyResult.ErrorMessage ?? "خطا در تایید تراکنش نزد بانک", verifyResult.ResultCode);
-                await _repository.UpdateAsync(transaction, cancellationToken);
-                await _repository.SaveChangesAsync(cancellationToken);
-                return new ConfirmPaymentResult(false, transaction.Id, null,
-                    transaction.MaskedCardNumber, verifyResult.ErrorMessage);
-            }
-
-            if (!string.IsNullOrWhiteSpace(verifyResult.MaskedCardNumber))
-                transaction.SetMaskedCardNumber(verifyResult.MaskedCardNumber);
-
-            transaction.MarkVerified();
-            await _repository.UpdateAsync(transaction, cancellationToken);
-            await _repository.SaveChangesAsync(cancellationToken);
-        }
-
         var settleResult = await gateway.SettleAsync(transaction, cancellationToken);
+
         if (!settleResult.IsSuccess)
         {
             transaction.MarkFailed(settleResult.ErrorMessage ?? "خطا در تسویه تراکنش نزد بانک", settleResult.ResultCode);
             await _repository.UpdateAsync(transaction, cancellationToken);
             await _repository.SaveChangesAsync(cancellationToken);
-            return new ConfirmPaymentResult(false, transaction.Id, null,
-                transaction.MaskedCardNumber, settleResult.ErrorMessage);
+            return new ConfirmPaymentResult(
+                false, transaction.Id, null, transaction.MaskedCardNumber, settleResult.ErrorMessage);
         }
+
+        if (!string.IsNullOrWhiteSpace(settleResult.MaskedCardNumber))
+            transaction.SetMaskedCardNumber(settleResult.MaskedCardNumber);
 
         transaction.MarkSettled();
         _outboxWriter.Add("PaymentSettled", new PaymentSettledEvent(
@@ -175,8 +179,12 @@ public class PaymentOrchestrationService
         await _repository.UpdateAsync(transaction, cancellationToken);
         await _repository.SaveChangesAsync(cancellationToken);
 
-        return new ConfirmPaymentResult(true, transaction.Id,
-            transaction.GatewaySaleReferenceId, transaction.MaskedCardNumber, null);
+        _logger.LogInformation(
+            "تراکنش {TransactionId} برای سفارش {OrderId} با موفقیت تسویه شد",
+            transaction.Id, transaction.OrderId);
+
+        return new ConfirmPaymentResult(
+            true, transaction.Id, transaction.GatewaySaleReferenceId, transaction.MaskedCardNumber, null);
     }
 
     /// <summary>

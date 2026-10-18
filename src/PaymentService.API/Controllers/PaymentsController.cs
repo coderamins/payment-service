@@ -40,7 +40,6 @@ public class PaymentsController : ControllerBase
         return result.IsSuccess ? Ok(result) : UnprocessableEntity(result);
     }
 
-    /// <summary>بازگشت کاربر از هر درگاه؛ نوع درگاه از روی خود تراکنش تشخیص داده می‌شود</summary>
     [HttpPost("callback/{provider}/{transactionId:long}")]
     public async Task<IActionResult> GatewayCallback(
         string provider,
@@ -50,60 +49,30 @@ public class PaymentsController : ControllerBase
     {
         var rawParameters = form.ToDictionary(f => f.Key, f => f.Value.ToString());
 
-        var result = await _orchestrationService.HandleGatewayCallbackAsync(
+        var result = await _orchestrationService.ConfirmCallbackAsync(
             new GatewayCallbackData(transactionId, rawParameters), cancellationToken);
 
         var returnUrl = await _orchestrationService.GetReturnUrlAsync(transactionId, cancellationToken);
-        return Redirect($"{returnUrl}?transactionId={transactionId}&paid={result.IsPaid}");
+        return Redirect($"{returnUrl}?transactionId={transactionId}&paid={result.IsSuccess}");
     }
 
-    ///// <summary>
-    ///// وقتی نتیجه پرداخت برگشت کاربر به صفحه نتیجه پرداخت که در تنظیمات ست کردیم هدایت میشه
-    ///// </summary>
-    ///// <returns></returns>
-    //[HttpPost("callback/mellat/{transactionId:guid}")]
-    //public async Task<IActionResult> MellatCallback(
-    //long transactionId, [FromForm] IFormCollection form, 
-    //CancellationToken cancellationToken)
-    //{
-    //    var rawParameters = form.ToDictionary(f => f.Key, f => f.Value.ToString());
-
-    //    var result = await _orchestrationService.HandleGatewayCallbackAsync(
-    //        new GatewayCallbackData(transactionId, rawParameters), cancellationToken);
-
-    //    var returnUrl = await _orchestrationService.GetReturnUrlAsync(transactionId, cancellationToken);
-    //    return Redirect($"{returnUrl}?transactionId={transactionId}&paid={result.IsPaid}");
-    //}
-
-    //[HttpPost("callback/asanpardakht/{transactionId:long}")]
-    //public async Task<IActionResult> AsanPardakhtCallback(
-    //long transactionId,
-    //[FromForm] IFormCollection form,
-    //CancellationToken cancellationToken)
-    //{
-    //    var rawParameters = form.ToDictionary(f => f.Key, f => f.Value.ToString());
-
-    //    var result = await _orchestrationService.HandleGatewayCallbackAsync(
-    //        new GatewayCallbackData(transactionId, rawParameters), cancellationToken);
-
-    //    var returnUrl = await _orchestrationService.GetReturnUrlAsync(transactionId, cancellationToken);
-    //    return Redirect($"{returnUrl}?transactionId={transactionId}&paid={result.IsPaid}");
-    //}
-
-    /// <summary>تایید نهایی (Verify + Settle) بعد از اینکه سرویس مصرف‌کننده موجودی را بررسی کرد</summary>
-    [HttpPost("{transactionId:long}/confirm")]
+    /// <summary>تسویه نهایی؛ بعد از تأیید شرایط کسب‌وکار توسط سرویس مصرف‌کننده</summary>
+    [HttpPost("{transactionId:long}/settle")]
     [ServiceFilter(typeof(IdempotencyKeyFilter))]
-    public async Task<ActionResult<ConfirmPaymentResult>> Confirm(z
+    public async Task<ActionResult<ConfirmPaymentResult>> Settle(
         long transactionId, CancellationToken cancellationToken)
     {
         try
         {
-            var result = await _orchestrationService.ConfirmPaymentAsync(transactionId, cancellationToken);
+            var result = await _orchestrationService.SettlePaymentAsync(transactionId, cancellationToken);
             return result.IsSuccess ? Ok(result) : UnprocessableEntity(result);
         }
-        catch (NotFoundException ex) { return NotFound(ex.Message); }
+        catch (NotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
     }
-
+        
     /// <summary>استعلام وضعیت با شناسه داخلی تراکنش</summary>
     [HttpGet("{transactionId:guid}/status")]
     public async Task<ActionResult<PaymentStatusResult>> GetStatus(

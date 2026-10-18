@@ -66,7 +66,12 @@ public class ParsianGateway : IPaymentGateway
                 : MapError(hasStatus ? status : -1, null)));
     }
 
-    public async Task<GatewayOperationResult> VerifyAsync(
+    /// <summary>پارسیان Verify جدا ندارد؛ Confirm همان اقدام نهایی است و در SettleAsync انجام می‌شود.</summary>
+    public Task<GatewayOperationResult> VerifyAsync(
+        PaymentTransaction transaction, CancellationToken cancellationToken = default)
+        => Task.FromResult(new GatewayOperationResult(true, "0", null));
+
+    public async Task<GatewayOperationResult> SettleAsync(
         PaymentTransaction transaction, CancellationToken cancellationToken = default)
     {
         if (!long.TryParse(transaction.GatewayRefId, out var token))
@@ -82,11 +87,6 @@ public class ParsianGateway : IPaymentGateway
             ok ? null : MapError(response.Status, null),
             response.CardNumberMasked);
     }
-
-    /// <summary>پارسیان مرحله Settle جدا ندارد؛ بعد از Confirm تسویه خودکار است.</summary>
-    public Task<GatewayOperationResult> SettleAsync(
-        PaymentTransaction transaction, CancellationToken cancellationToken = default)
-        => Task.FromResult(new GatewayOperationResult(true, "0", null));
 
     public async Task<GatewayOperationResult> ReverseAsync(
         PaymentTransaction transaction, CancellationToken cancellationToken = default)
