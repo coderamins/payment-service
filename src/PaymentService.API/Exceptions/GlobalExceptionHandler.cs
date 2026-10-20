@@ -34,6 +34,10 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
 
         httpContext.Response.StatusCode = problem.Status ?? 500;
 
+        if (exception is GatewayUnavailableException { RetryAfter: { } retryAfter })
+            httpContext.Response.Headers.RetryAfter =
+                Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+
         await httpContext.Response.WriteAsJsonAsync(problem, cancellationToken);
 
         return true;
@@ -56,6 +60,10 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
 
         var (status, title) = exception switch
         {
+            GatewayUnavailableException =>
+                (StatusCodes.Status503ServiceUnavailable,
+                    "Gateway Unavailable"),
+
             ValidationException =>
                 (StatusCodes.Status400BadRequest,
                     "Validation Failed"),

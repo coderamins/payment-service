@@ -7,6 +7,7 @@ using PaymentService.Application.Common.Options;
 using PaymentService.Application.Services;
 using PaymentService.Infrastructure.Gateways;
 using PaymentService.Infrastructure.Gateways.AsanPardakht;
+using PaymentService.Infrastructure.Gateways.Health;
 using PaymentService.Infrastructure.Gateways.Mellat;
 using PaymentService.Infrastructure.Gateways.Parsian;
 using PaymentService.Infrastructure.Gateways.Shaparak;
@@ -43,6 +44,7 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<IPaymentGatewayFactory, PaymentGatewayFactory>();
 
+        services.AddGatewayHealth(configuration);
 
         // ===================== درگاه‌ها (هر کدام در فایل خودش) =====================
         services.AddMellatGateway(configuration);

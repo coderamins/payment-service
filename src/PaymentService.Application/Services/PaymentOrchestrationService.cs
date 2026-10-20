@@ -17,31 +17,46 @@ public class PaymentOrchestrationService
     private readonly IOutboxWriter _outboxWriter;
     private readonly ILogger<PaymentOrchestrationService> _logger;
     private readonly PaymentCallbackOptions _callbackOptions;
+    private readonly IGatewayHealthMonitor _healthMonitor;
 
     public PaymentOrchestrationService(
         IPaymentGatewayFactory gatewayFactory,
         IPaymentTransactionRepository repository,
         ILogger<PaymentOrchestrationService> logger,
         IOutboxWriter outboxWriter,
-        PaymentCallbackOptions callbackOptions)
+        PaymentCallbackOptions callbackOptions,
+        IGatewayHealthMonitor healthMonitor)
     {
         _gatewayFactory = gatewayFactory;
         _repository = repository;
         _logger = logger;
         _outboxWriter = outboxWriter;
         _callbackOptions = callbackOptions;
+        _healthMonitor = healthMonitor;
     }
 
     public async Task<CreatePaymentResult> CreatePaymentAsync(
         CreatePaymentRequest request,
         CancellationToken cancellationToken = default)
     {
+        var provider = request.GatewayProvider;
+
+        var gateway = _gatewayFactory.Resolve(provider);
+
+        // اگر درگاه خارج از سرویس است، هیچ تراکنشی ساخته نمی‌شود
+        var admission = _healthMonitor.TryAcquire(provider);
+        if (!admission.Allowed)
+            throw new GatewayUnavailableException(
+                provider,
+                admission.Reason ?? $"درگاه {provider} موقتاً در دسترس نیست",
+                admission.RetryAfter);
+
         var transaction = PaymentTransaction.Create(
             request.OrderId,
             request.RequestingService,
             request.AmountInRials,
             request.ReturnUrl,
-            request.GatewayProvider);
+            provider);
 
         await _repository.AddAsync(transaction, cancellationToken);
         await _repository.SaveChangesAsync(cancellationToken);
@@ -49,14 +64,35 @@ public class PaymentOrchestrationService
         // ساخت آدرس callback بانک
         var callbackUrl = BuildCallbackUrl(transaction);
 
-        var gateway = _gatewayFactory
-            .Resolve(request.GatewayProvider);
+        GatewayRequestResult gatewayResult;
 
-        var gatewayResult = await gateway.RequestPaymentAsync(
-            transaction,
-            callbackUrl,
-            request.PayerNationalCode,
-            cancellationToken);
+        try
+        {
+            gatewayResult = await gateway.RequestPaymentAsync(
+                transaction,
+                callbackUrl,
+                request.PayerNationalCode,
+                cancellationToken);
+        }
+        catch (GatewayCommunicationException ex)
+        {
+            _healthMonitor.RecordFailure(provider, ex.Message);
+
+            transaction.MarkFailed(ex.Message);
+            await _repository.UpdateAsync(transaction, cancellationToken);
+            await _repository.SaveChangesAsync(cancellationToken);
+
+            _logger.LogWarning(ex, "ارتباط با درگاه {Provider} برای سفارش {OrderId} برقرار نشد",
+                provider, request.OrderId);
+
+            // 503 و ذخیره نشدن در Idempotency: تلاش بعدی با همان کلید یک تراکنش تازه می‌سازد
+            throw new GatewayUnavailableException(
+                provider,
+                $"ارتباط با درگاه {provider} برقرار نشد؛ دوباره تلاش کنید یا درگاه دیگری را انتخاب کنید");
+        }
+
+        // هر پاسخی از بانک (حتی خطای منطقی) یعنی درگاه زنده است
+        _healthMonitor.RecordSuccess(provider);
 
         if (!gatewayResult.IsSuccess)
         {
@@ -216,7 +252,7 @@ public class PaymentOrchestrationService
     /// عملیات بازگشت وجه
     /// </summary>
     public async Task<ConfirmPaymentResult> ReverseAsync(
-        long transactionId, 
+        long transactionId,
         CancellationToken cancellationToken = default)
     {
         var transaction = await _repository.GetByIdAsync(transactionId, cancellationToken)

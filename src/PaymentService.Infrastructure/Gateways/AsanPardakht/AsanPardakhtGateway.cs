@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using PaymentService.Application.Abstractions;
+using PaymentService.Application.Common.Exceptions;
 using PaymentService.Domain.Entities;
 using PaymentService.Domain.Enums;
 using PaymentService.Infrastructure.Gateways.Helpers;
@@ -40,6 +41,9 @@ public class AsanPardakhtGateway : IPaymentGateway
         var (isSuccess, token, statusCode) = await _apiClient.RequestTokenAsync(
             transaction.Id, transaction.AmountInRials,
             callbackUrl, additionalData, cancellationToken);
+
+        if (!isSuccess && statusCode >= 500)
+            throw new GatewayCommunicationException($"خطای سرور آسان‌پرداخت (HTTP {statusCode})");
 
         if (!isSuccess || string.IsNullOrWhiteSpace(token))
             return new GatewayRequestResult(false, null, null, MapTokenError(statusCode));
