@@ -30,7 +30,7 @@ public class AsanPardakhtApiClient
     }
 
     public async Task<(bool IsSuccess, string? Token, int StatusCode)> RequestTokenAsync(
-       long localInvoiceId, long amountInRials, string callbackUrl, string? additionalData, CancellationToken ct)
+       long localInvoiceId, decimal amountInRials, string callbackUrl, string? additionalData, CancellationToken ct)
     {
         var body = new
         {

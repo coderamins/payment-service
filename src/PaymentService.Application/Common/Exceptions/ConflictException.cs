@@ -1,6 +1,6 @@
 ﻿namespace PaymentService.Application.Common.Exceptions
 {
-    public sealed class ConflictException : AppException
+    public class ConflictException : AppException
     {
         public ConflictException(string message)
             : base(message)

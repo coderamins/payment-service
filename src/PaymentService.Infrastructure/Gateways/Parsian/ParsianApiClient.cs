@@ -22,7 +22,7 @@ public class ParsianApiClient
     }
 
     public Task<ParsianSaleResponse> SalePaymentAsync(
-        long orderId, long amount, string callbackUrl, string? additionalData, CancellationToken ct)
+        long orderId, decimal amount, string callbackUrl, string? additionalData, CancellationToken ct)
         => PostAsync<ParsianSaleResponse>("Payment/SalePaymentRequest", new
         {
             LoginAccount = _options.LoginAccount,
@@ -33,7 +33,7 @@ public class ParsianApiClient
         }, ct);
 
     public Task<ParsianConfirmResponse> ConfirmAsync(
-        long token, long orderId, long amount, CancellationToken ct)
+        long token, long orderId, decimal amount, CancellationToken ct)
         => PostAsync<ParsianConfirmResponse>("Payment/ConfirmPaymentWithAmount", new
         {
             LoginAccount = _options.LoginAccount,

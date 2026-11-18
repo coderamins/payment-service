@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging;
 using PaymentService.Application.Common.Exceptions;
+using Serilog;
 using System.Text;
+using System.Text.Json;
 using System.Xml.Linq;
 
 namespace PaymentService.Infrastructure.Gateways.Mellat;
@@ -23,7 +25,7 @@ public class MellatSoapClient
     }
 
     public Task<string> BpPayRequestAsync(
-        string orderId, long amount, string localDate, string localTime,
+        string orderId, decimal amount, string localDate, string localTime,
         string callbackUrl, string? additionalData, string? payerId, CancellationToken ct)
     {
         var parameters = new (string Name, string Value)[]
@@ -37,9 +39,9 @@ public class MellatSoapClient
             ("localTime", localTime),
             ("additionalData", additionalData ?? ""),
             ("callBackUrl", callbackUrl),
-            ("payerId", payerId ?? ""),
+            ("payerId", payerId ?? "0"),
         };
-
+        var test = JsonSerializer.Serialize(parameters);
         return CallAsync("bpPayRequest", parameters, ct);
     }
 
@@ -123,8 +125,10 @@ public class MellatSoapClient
         try
         {
             var doc = XDocument.Parse(soapXml);
-            var returnElement = doc.Descendants()
-                .FirstOrDefault(e => e.Name.LocalName.Equals($"{operationName}Return", StringComparison.OrdinalIgnoreCase));
+
+            var returnElement = doc.Descendants().FirstOrDefault(e =>
+                e.Name.LocalName.Equals("return", StringComparison.OrdinalIgnoreCase)
+                || e.Name.LocalName.Equals($"{operationName}Return", StringComparison.OrdinalIgnoreCase));
 
             if (returnElement is null)
                 throw new GatewayCommunicationException($"فیلد {operationName}Return در پاسخ بانک یافت نشد");

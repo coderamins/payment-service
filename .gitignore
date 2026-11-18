@@ -1,4 +1,3 @@
-```gitignore
 ## Ignore Visual Studio temporary files
 .vs/
 .vscode/
@@ -53,6 +52,9 @@ ScaffoldingReadMe.txt
 *.log
 logs/
 
+## Other files
+*.tar
+
 ## Publish output
 publish/
 wwwroot/dist/
@@ -91,4 +93,3 @@ docker-compose.override.yml
 
 ## Generated files
 Generated/
-```

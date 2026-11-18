@@ -8,7 +8,7 @@ services:
       - GENERIC_TIMEZONE=Asia/Tehran
       - TZ=Asia/Tehran
 
-      - ConnectionStrings__PaymentDb=Password=ap_os_alc01;Persist Security Info=True;User ID=ap_os_alc01_user;Initial Catalog=paymentgateway;Data Source=db-sq-dlc01,1433;TrustServerCertificate=True;MultipleActiveResultSets=true;
+      - ConnectionStrings__PaymentDb=Password=ap_os_alc01;Persist Security Info=True;User ID=ap_os_alc01_user;Initial Catalog=onlinesale3;Data Source=db-sq-dlc01,1433;TrustServerCertificate=True;MultipleActiveResultSets=true;
 
       - RABBITMQ_HOST=ap-rq-alc01
       - RABBITMQ_PORT=5672

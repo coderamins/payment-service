@@ -1,16 +1,10 @@
-﻿using PaymentService.Domain.Enums;
-
-namespace PaymentService.Application.Common.Exceptions;
-
-public sealed class GatewayUnavailableException : AppException
+﻿namespace PaymentService.Application.Common.Exceptions
 {
-    public GatewayProvider Provider { get; }
-    public TimeSpan? RetryAfter { get; }
-
-    public GatewayUnavailableException(GatewayProvider provider, string message, TimeSpan? retryAfter = null)
-        : base(message)
+    public sealed class GatewayUnavailableException : AppException
     {
-        Provider = provider;
-        RetryAfter = retryAfter;
+        public GatewayUnavailableException(string message)
+            : base(message)
+        {
+        }
     }
 }

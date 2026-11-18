@@ -9,12 +9,17 @@ namespace PaymentService.Application.DTOs;
 public record CreatePaymentRequest(
     long OrderId,
     long AmountInRials,
-    string RequestingService,   // سیستم فروش اینترنتی یا میز خدمت یا ... بصورت لاتین
+    EPaymentSubscriber PaymentSubscriber,  
     GatewayProvider GatewayProvider,
     string ReturnUrl,
     string? PayerNationalCode = null,
-    string? Description = null
+    string? Description = null,
+    int? TerminalNumber = null,          // خالی = ترمینال پیش‌فرض (فعلاً فقط پاسارگاد)
+    SplitValueType? SplitType = null,    // 1 = درصد، 2 = مبلغ (ریال)
+    IReadOnlyList<PaymentSplit>? Splits = null   // خالی = پرداخت عادی یا تسهیم ثابت سمت بانک
 );
+public enum SplitValueType { Percent = 1, Amount = 2 }
+public record PaymentSplit(string Sheba, decimal Value);
 
 public record CreatePaymentResult(
     bool IsSuccess,
@@ -26,7 +31,7 @@ public record CreatePaymentResult(
 
 /// <summary>داده‌ای که درگاه پس از بازگشت کاربر (Callback) برای ما ارسال می‌کند</summary>
 public record GatewayCallbackData(
-    long TransactionId,
+    Guid CallbackKey,
     IDictionary<string, string> RawParameters
 );
 
@@ -43,13 +48,17 @@ public record ConfirmPaymentResult(
 public record PaymentStatusResult(
     long TransactionId,
     long OrderId,
-    long AmountInRials,
-    string Status,
-    string GatewayProvider,
+    decimal AmountInRials,
+    PaymentOutcome Status,
+    GatewayProvider GatewayProvider,
     string? MaskedCardNumber,
     string? ReferenceCode,
+    string? GatewayRefId,
     string? FailureReason,
-    DateTime CreatedAtUtc
+    string? StatusName,
+    string? PaymentProviderName,
+    DateTime CreatedAtUtc,
+    DateTime? UpdateDateUtc
 );
 
 

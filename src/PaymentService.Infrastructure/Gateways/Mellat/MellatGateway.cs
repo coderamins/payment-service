@@ -12,6 +12,21 @@ public class MellatGateway : IPaymentGateway
 {
     // کد نتیجه صفر یعنی موفقیت‌آمیز بودن عملیات - طبق مستندات بانک ملت
     private const string SuccessResultCode = "0";
+    /// <summary>
+    /// تراکنش پیشتر وریفای شده است
+    /// </summary>
+    private const string AlreadyVerifiedResultCode = "43";
+    /// <summary>
+    /// تراکنش پیشتر تسویه شده است
+    /// </summary>
+    private const string AlreadySettledResultCode = "45";
+
+    /// <summary>
+    /// اين تراکنش پيشتر به درخواست پذيرنده و يا بصورت
+    /// اتوماتيک به دليل اتمام زمان مجاز برای تائيدآنReverse
+    /// شده و وجه آن به دارنده عودت داده شده است
+    /// </summary>
+    private const string AlreadyReverseStatusCode = "48";
 
     private readonly MellatSoapClient _soapClient;
     private readonly MellatOptions _options;
@@ -34,7 +49,7 @@ public class MellatGateway : IPaymentGateway
     {
         var now = DateTime.Now;
 
-        var mellatOrderId = transaction.Id.ToString();
+        var mellatOrderId = transaction.PaymentTransactionId.ToString();
 
         var rawResult = await _soapClient.BpPayRequestAsync(
             orderId: mellatOrderId,
@@ -68,26 +83,40 @@ public class MellatGateway : IPaymentGateway
         rawParameters.TryGetValue("ResCode", out var resCode);
         rawParameters.TryGetValue("SaleReferenceId", out var saleReferenceId);
         rawParameters.TryGetValue("CardHolderPan", out var maskedCard);
+        rawParameters.TryGetValue("RefId", out var refId);
+
+        rawParameters.TryGetValue("Amount", out var amountRaw);
+
+        long? reportedAmount = long.TryParse(amountRaw, out var amount) ? amount : null;
 
         var isSuccess = resCode == SuccessResultCode;
 
         return new GatewayCallbackParseResult(
             isSuccess,
             resCode ?? "unknown",
-            saleReferenceId,
+            (saleReferenceId is "0" or "-1" ? null: saleReferenceId),
             maskedCard,
-            isSuccess ? null : MapErrorMessage(resCode ?? "unknown"));
+            isSuccess ? null : MapErrorMessage(resCode ?? "unknown"),
+            reportedAmount,
+            refId,
+            true
+            );
     }
 
     public async Task<GatewayOperationResult> VerifyAsync(
-        PaymentTransaction transaction,
-        CancellationToken cancellationToken = default)
+       PaymentTransaction transaction,
+       CancellationToken cancellationToken = default)
     {
-        var mellatOrderId = transaction.Id.ToString();
-        var resultCode = await _soapClient.BpVerifyRequestAsync(
-            mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId!, cancellationToken);
+        if (string.IsNullOrWhiteSpace(transaction.GatewaySaleReferenceId))
+            return new GatewayOperationResult(false, "NO_SALE_REF", "شناسه مرجع فروش موجود نیست");
 
-        var isSuccess = resultCode == SuccessResultCode;
+        var mellatOrderId = transaction.PaymentTransactionId.ToString();
+        var resultCode = (await _soapClient.BpVerifyRequestAsync(
+            mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId, cancellationToken))?.Trim();
+
+        //---اگه بار اول وریفای موفق شده باشه ولی به هردلیلی نتیجه برای ما برنگشته باشه دفه بعد که کانفیرم میکنیم کد 43 برگردانده می شود 
+        var isSuccess = resultCode is SuccessResultCode or AlreadyVerifiedResultCode;   
+
         return new GatewayOperationResult(isSuccess, resultCode, isSuccess ? null : MapErrorMessage(resultCode));
     }
 
@@ -95,11 +124,13 @@ public class MellatGateway : IPaymentGateway
         PaymentTransaction transaction,
         CancellationToken cancellationToken = default)
     {
-        var mellatOrderId = transaction.Id.ToString();
-        var resultCode = await _soapClient.BpSettleRequestAsync(
-            mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId!, cancellationToken);
+        var mellatOrderId = transaction.PaymentTransactionId.ToString();
+        var resultCode = (await _soapClient.BpSettleRequestAsync(
+            mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId!, cancellationToken))?.Trim();
 
-        var isSuccess = resultCode == SuccessResultCode;
+        //--- کد 45 وقتی برمیگرده که دفه اول تسویه شده ولی نتیجه برنگشته ولی دفه دوم با موفقیت برمیگرده
+        var isSuccess = resultCode is SuccessResultCode or AlreadySettledResultCode;
+
         return new GatewayOperationResult(isSuccess, resultCode, isSuccess ? null : MapErrorMessage(resultCode));
     }
 
@@ -107,11 +138,13 @@ public class MellatGateway : IPaymentGateway
         PaymentTransaction transaction,
         CancellationToken cancellationToken = default)
     {
-        var mellatOrderId = transaction.Id.ToString();
-        var resultCode = await _soapClient.BpReversalRequestAsync(
-            mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId!, cancellationToken);
+        var mellatOrderId = transaction.PaymentTransactionId.ToString();
+        var resultCode = (await _soapClient.BpReversalRequestAsync(
+            mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId!, cancellationToken))?.Trim();
 
-        var isSuccess = resultCode == SuccessResultCode;
+        //---اگه دفه اول در ریورس نتیجه دریافت نشده باشه ولی ریورس انجام شده باشه دفعات بعدی کد 48 بجای 0 برمیگرده 
+        var isSuccess = resultCode is SuccessResultCode or AlreadyReverseStatusCode;
+
         return new GatewayOperationResult(isSuccess, resultCode, isSuccess ? null : MapErrorMessage(resultCode));
     }
 

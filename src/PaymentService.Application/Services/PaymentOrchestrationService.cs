@@ -1,12 +1,13 @@
 using Microsoft.Extensions.Logging;
 using PaymentService.Application.Abstractions;
+using PaymentService.Application.Common;
 using PaymentService.Application.Common.Exceptions;
 using PaymentService.Application.Common.Options;
 using PaymentService.Application.DTOs;
 using PaymentService.Application.Events;
 using PaymentService.Domain.Entities;
 using PaymentService.Domain.Enums;
-using System.Text.Json;
+using System.Data;
 
 namespace PaymentService.Application.Services;
 
@@ -15,9 +16,9 @@ public class PaymentOrchestrationService
     private readonly IPaymentGatewayFactory _gatewayFactory;
     private readonly IPaymentTransactionRepository _repository;
     private readonly IOutboxWriter _outboxWriter;
+    private readonly IGatewayHealthMonitor _healthMonitor;
     private readonly ILogger<PaymentOrchestrationService> _logger;
     private readonly PaymentCallbackOptions _callbackOptions;
-    private readonly IGatewayHealthMonitor _healthMonitor;
 
     public PaymentOrchestrationService(
         IPaymentGatewayFactory gatewayFactory,
@@ -39,24 +40,56 @@ public class PaymentOrchestrationService
         CreatePaymentRequest request,
         CancellationToken cancellationToken = default)
     {
-        var provider = request.GatewayProvider;
+        //if (!ReturnUrlValidator.IsAllowed(request.ReturnUrl, _callbackOptions))
+        //    throw new ValidationException(new Dictionary<string, string[]>
+        //    {
+        //        [nameof(request.ReturnUrl)] = new[] { "دامنه‌ی آدرس بازگشت مجاز نیست" }
+        //    });
 
-        var gateway = _gatewayFactory.Resolve(provider);
+        var hasSplits = request.Splits is { Count: > 0 };
 
-        // اگر درگاه خارج از سرویس است، هیچ تراکنشی ساخته نمی‌شود
-        var admission = _healthMonitor.TryAcquire(provider);
-        if (!admission.Allowed)
+        //if ((hasSplits || request.TerminalNumber is not null)
+        //    && request.GatewayProvider != GatewayProvider.Pasargad)
+        //    throw new ValidationException(new Dictionary<string, string[]>
+        //    {
+        //        ["Splits"] = new[] { "تعیین ترمینال و تسهیم داینامیک فعلاً فقط برای درگاه پاسارگاد پشتیبانی می‌شود" }
+        //    });
+
+        if (request.TerminalNumber is <= 0)
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                [nameof(request.TerminalNumber)] = new[] { "شماره ترمینال نامعتبر است" }
+            });
+
+        var splitShares = hasSplits
+            ? PaymentSplitCalculator.Normalize(request.AmountInRials, request.SplitType, request.Splits!)
+            : null;
+
+        var gateway = _gatewayFactory
+            .Resolve(request.GatewayProvider);
+
+        var activePays = await _repository
+            .GetActivePayments(
+                request.OrderId,
+                request.PaymentSubscriber,
+                cancellationToken);
+
+        if (activePays.Any())
+            throw new ConflictException("برای این سفارش پرداخت در حال بررسی یا انجام‌شده وجود دارد");
+
+        var _acuire=_healthMonitor.TryAcquire(request.GatewayProvider);
+        if(!_acuire.Allowed)
             throw new GatewayUnavailableException(
-                provider,
-                admission.Reason ?? $"درگاه {provider} موقتاً در دسترس نیست",
-                admission.RetryAfter);
+                $"این درگاه در حال حاضر در دسترس نمی باشد. لطفا از درگاه دیگری استفاده کنید یا بعدا تلاش کنید.");
 
         var transaction = PaymentTransaction.Create(
             request.OrderId,
-            request.RequestingService,
+            request.PaymentSubscriber,
             request.AmountInRials,
             request.ReturnUrl,
-            provider);
+            request.GatewayProvider,
+            request.TerminalNumber,
+            splitShares);
 
         await _repository.AddAsync(transaction, cancellationToken);
         await _repository.SaveChangesAsync(cancellationToken);
@@ -64,56 +97,57 @@ public class PaymentOrchestrationService
         // ساخت آدرس callback بانک
         var callbackUrl = BuildCallbackUrl(transaction);
 
-        GatewayRequestResult gatewayResult;
-
         try
         {
-            gatewayResult = await gateway.RequestPaymentAsync(
+            var gatewayResult = await gateway.RequestPaymentAsync(
                 transaction,
                 callbackUrl,
                 request.PayerNationalCode,
                 cancellationToken);
-        }
-        catch (GatewayCommunicationException ex)
-        {
-            _healthMonitor.RecordFailure(provider, ex.Message);
 
-            transaction.MarkFailed(ex.Message);
+            if (!gatewayResult.IsSuccess)
+            {
+                transaction.MarkFailed(gatewayResult.ErrorMessage ?? "خطای نامشخص در ارسال درخواست به درگاه");
+                await _repository.UpdateAsync(transaction, cancellationToken);
+                await _repository.SaveChangesAsync(cancellationToken);
+
+                _logger.LogWarning(
+                    "درخواست پرداخت به درگاه {Provider} برای سفارش {OrderId} ناموفق بود: {Error}",
+                    request.GatewayProvider, request.OrderId, gatewayResult.ErrorMessage);
+
+                _healthMonitor.RecordFailure(gateway.Provider, "خطای نامشخص در ارسال درخواست به درگاه");
+
+                return new CreatePaymentResult(
+                    false,
+                    transaction.PaymentTransactionId,
+                    null,
+                    gatewayResult.ErrorMessage);
+            }
+
+            transaction.MarkRedirectedToGateway(gatewayResult.RefId!);
             await _repository.UpdateAsync(transaction, cancellationToken);
             await _repository.SaveChangesAsync(cancellationToken);
 
-            _logger.LogWarning(ex, "ارتباط با درگاه {Provider} برای سفارش {OrderId} برقرار نشد",
-                provider, request.OrderId);
-
-            // 503 و ذخیره نشدن در Idempotency: تلاش بعدی با همان کلید یک تراکنش تازه می‌سازد
-            throw new GatewayUnavailableException(
-                provider,
-                $"ارتباط با درگاه {provider} برقرار نشد؛ دوباره تلاش کنید یا درگاه دیگری را انتخاب کنید");
+            _healthMonitor.RecordSuccess(gateway.Provider);
+            return new CreatePaymentResult(
+                true,
+                transaction.PaymentTransactionId,
+                gatewayResult.RedirectUrl,
+                null,
+                gatewayResult.RedirectMethod,
+                gatewayResult.RedirectFormFields);
         }
-
-        // هر پاسخی از بانک (حتی خطای منطقی) یعنی درگاه زنده است
-        _healthMonitor.RecordSuccess(provider);
-
-        if (!gatewayResult.IsSuccess)
+        catch(Exception ex)
         {
-            transaction.MarkFailed(gatewayResult.ErrorMessage ?? "خطای نامشخص در ارسال درخواست به درگاه");
-            await _repository.UpdateAsync(transaction, cancellationToken);
-            await _repository.SaveChangesAsync(cancellationToken);
+            _logger.LogError(ex, "ارتباط با درگاه برای تراکنش {Id} ناموفق بود", transaction.PaymentTransactionId);
 
-            _logger.LogWarning(
-                "درخواست پرداخت به درگاه {Provider} برای سفارش {OrderId} ناموفق بود: {Error}",
-                request.GatewayProvider, request.OrderId, gatewayResult.ErrorMessage);
+            transaction.MarkFailed("GatewayUnavailable");
+            await _repository.UpdateAsync(transaction, CancellationToken.None);
+            await _repository.SaveChangesAsync(CancellationToken.None);
 
-            return new CreatePaymentResult(false, transaction.Id, null, gatewayResult.ErrorMessage);
+            _healthMonitor.RecordFailure(gateway.Provider, "GatewayUnavailable");
+            throw new GatewayUnavailableException($"ارتباط با درگاه برای تراکنش {transaction.PaymentTransactionId} ناموفق بود");
         }
-
-        transaction.MarkRedirectedToGateway(gatewayResult.RefId!);
-        await _repository.UpdateAsync(transaction, cancellationToken);
-        await _repository.SaveChangesAsync(cancellationToken);
-
-        return new CreatePaymentResult(
-            true, transaction.Id, gatewayResult.RedirectUrl, null,
-            gatewayResult.RedirectMethod, gatewayResult.RedirectFormFields);
     }
 
     /// <summary>
@@ -125,52 +159,144 @@ public class PaymentOrchestrationService
         CancellationToken cancellationToken = default)
     {
         var transaction = await _repository
-            .GetByIdAsync(callback.TransactionId, cancellationToken)
-            ?? throw new NotFoundException($"تراکنشی با شناسه {callback.TransactionId} یافت نشد");
+            .GetByCallbackKeyAsync(callback.CallbackKey, cancellationToken)
+            ?? throw new NotFoundException($"تراکنش یافت نشد");
 
         // callback تکراری (refresh یا ارسال مجدد بانک) نباید دوباره پردازش شود
-        if (transaction.Status != PaymentStatus.RedirectedToGateway)
+        if (transaction.PaymentStatusId != EPaymentStatus.RedirectedToGateway)
         {
-            var paid = transaction.Status is PaymentStatus.Verified or PaymentStatus.Settled;
+            var alreadyPaid = transaction.PaymentStatusId is EPaymentStatus.Verified or EPaymentStatus.Settled;
             return new ConfirmPaymentResult(
-                paid, transaction.Id,
-                paid ? transaction.GatewaySaleReferenceId : null,
+                alreadyPaid, transaction.PaymentTransactionId,
+                alreadyPaid ? transaction.GatewaySaleReferenceId : null,
                 transaction.MaskedCardNumber,
-                paid ? null : transaction.FailureReason ?? "این تراکنش قبلاً پردازش شده است");
+                alreadyPaid ? null : transaction.FailureReason ?? "این تراکنش قبلاً پردازش شده است");
         }
 
-        var gateway = _gatewayFactory.Resolve(transaction.GatewayProvider);
+        var gateway = _gatewayFactory.Resolve(transaction.GatewayProviderId);
         var parsed = gateway.ParseCallback(callback.RawParameters);
+
+        if (parsed.CallbackToken is not null &&
+            !string.Equals(parsed.CallbackToken, transaction.GatewayRefId, StringComparison.Ordinal))
+        {
+            _logger.LogWarning("توکن callback با توکن ذخیره‌شده نمی‌خواند. تراکنش {Id}", transaction.PaymentTransactionId);
+            return new ConfirmPaymentResult(false, transaction.PaymentTransactionId, null, null, "callback نامعتبر است.");
+        }
 
         transaction.MarkCallbackReceived(parsed.ResultCode, parsed.SaleReferenceId, parsed.MaskedCardNumber);
 
-        if (!parsed.IsSuccessfulPayment)
+        #region کنترل concurrency
+        // ادعای پردازش: اگر درخواست دیگری هم‌زمان همین تراکنش را برداشته باشد، اینجا شکست می‌خورد
+        transaction.Touch();
+        try
+        {
+            await _repository.UpdateAsync(transaction, cancellationToken);
+            await _repository.SaveChangesAsync(cancellationToken);
+        }
+        catch (ConcurrencyException)
+        {
+            var current = await _repository.GetByCallbackKeyAsync(callback.CallbackKey, cancellationToken)
+                ?? throw new NotFoundException("تراکنش یافت نشد");
+
+            var paidNow = current.PaymentStatusId is EPaymentStatus.Verified or EPaymentStatus.Settled;
+            return new ConfirmPaymentResult(
+                paidNow,
+                current.PaymentTransactionId,
+                paidNow ? current.GatewaySaleReferenceId : null,
+                current.MaskedCardNumber,
+                paidNow ? null : current.FailureReason ?? "این تراکنش در حال پردازش می باشد .");
+        }
+        #endregion
+
+        var paid = parsed.IsSuccessfulPayment;
+        GatewayOperationResult? verifyResult = null;
+
+        // برخی درگاه‌ها (ملت) حتی با نتیجه‌ی ناموفق باید Verify شوند تا وضعیت واقعی معلوم شود
+        if (!paid && parsed.VerifyEvenIfUnsuccessful &&
+            !string.IsNullOrWhiteSpace(transaction.GatewaySaleReferenceId))
+        {
+            verifyResult = await gateway.VerifyAsync(transaction, cancellationToken);
+            if (verifyResult.IsSuccess)
+            {
+                paid = true;
+                _logger.LogWarning(
+                    "callback ناموفق بود ولی بانک Verify را تأیید کرد. تراکنش {TransactionId}",
+                    transaction.PaymentTransactionId);
+            }
+        }
+
+        if (!paid)
         {
             transaction.MarkCanceledByUser();
+            _outboxWriter.Add("PaymentCanceled", new PaymentCanceledEvent(
+                transaction.PaymentTransactionId, transaction.OrderId, transaction.AmountInRials,
+                transaction.GatewayProviderId.ToString(), DateTime.UtcNow));
+
             await _repository.UpdateAsync(transaction, cancellationToken);
             await _repository.SaveChangesAsync(cancellationToken);
             return new ConfirmPaymentResult(
-                false, transaction.Id, null, null,
+                false, transaction.PaymentTransactionId, null, null,
                 parsed.ErrorMessage ?? "پرداخت توسط کاربر لغو شد");
         }
 
-        var verifyResult = await gateway.VerifyAsync(transaction, cancellationToken);
+        if (parsed.IsSuccessfulPayment
+            && parsed.ReportedAmountInRials is decimal reported
+            && reported != transaction.AmountInRials)
+        {
+            transaction.MarkAmountMismatch();
+            _outboxWriter.Add("AmountMismatch", new PaymentAmountMismatchEvent(
+                transaction.PaymentTransactionId, transaction.OrderId, transaction.AmountInRials,
+                parsed.ReportedAmountInRials ?? 0,
+                transaction.GatewayProviderId.ToString(), DateTime.UtcNow));
+
+            try
+            {
+                var rev = await gateway.ReverseAsync(transaction, cancellationToken);
+                if (rev.IsSuccess) transaction.MarkReversed();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Reverse بعد از مغایرت مبلغ ناموفق بود: {Id}", transaction.PaymentTransactionId);
+            }
+
+            await _repository.UpdateAsync(transaction, cancellationToken);
+            await _repository.SaveChangesAsync(cancellationToken);
+            return new ConfirmPaymentResult(
+                false, transaction.PaymentTransactionId, null, null,
+                parsed.ErrorMessage ?? "مغایرت مبلغ سفارش با مبلغ برگشتی از بانک");
+        }
+        else if (parsed.IsSuccessfulPayment && parsed.ReportedAmountInRials is null)
+            _logger.LogWarning("بانک مبلغ تراکنش {Id} را در callback نفرستاد؛ مقایسه انجام نشد", transaction.PaymentTransactionId);
+
+        verifyResult ??= await gateway.VerifyAsync(transaction, cancellationToken);
 
         if (!verifyResult.IsSuccess)
         {
             transaction.MarkFailed(verifyResult.ErrorMessage ?? "خطا در تایید تراکنش نزد بانک", verifyResult.ResultCode);
+            _outboxWriter.Add("PaymentFailed", new PaymentFailedEvent(
+                transaction.PaymentTransactionId, transaction.OrderId, transaction.AmountInRials,
+                transaction.GatewayProviderId.ToString(), "Verify", transaction.FailureReason, DateTime.UtcNow));
+
             await _repository.UpdateAsync(transaction, cancellationToken);
             await _repository.SaveChangesAsync(cancellationToken);
             return new ConfirmPaymentResult(
-                false, transaction.Id, null, transaction.MaskedCardNumber, verifyResult.ErrorMessage);
+                false, transaction.PaymentTransactionId, null, transaction.MaskedCardNumber, verifyResult.ErrorMessage);
         }
 
+        // برخی درگاه‌ها (مثل پاسارگاد) کارت ماسک‌شده را در Verify برمی‌گردانند نه در callback
+        if (!string.IsNullOrWhiteSpace(verifyResult.MaskedCardNumber))
+            transaction.SetMaskedCardNumber(verifyResult.MaskedCardNumber);
+
         transaction.MarkVerified();   // پرداخت واقعی است؛ منتظر تصمیم سرویس مصرف‌کننده
+        _outboxWriter.Add("PaymentVerified", new PaymentVerifiedEvent(
+            transaction.PaymentTransactionId, transaction.OrderId, transaction.AmountInRials,
+            transaction.GatewayProviderId.ToString(), transaction.GatewaySaleReferenceId, DateTime.UtcNow));
+
         await _repository.UpdateAsync(transaction, cancellationToken);
         await _repository.SaveChangesAsync(cancellationToken);
 
         return new ConfirmPaymentResult(
-            true, transaction.Id, transaction.GatewaySaleReferenceId, transaction.MaskedCardNumber, null);
+            true, transaction.PaymentTransactionId, transaction.GatewaySaleReferenceId, transaction.MaskedCardNumber, null);
     }
 
     /// <summary>
@@ -184,15 +310,27 @@ public class PaymentOrchestrationService
             ?? throw new NotFoundException($"تراکنشی با شناسه {transactionId} یافت نشد");
 
         // فراخوانی تکراری: همان نتیجه قبلی
-        if (transaction.Status == PaymentStatus.Settled)
-            return new ConfirmPaymentResult(true, transaction.Id,
+        if (transaction.PaymentStatusId == EPaymentStatus.Settled)
+            return new ConfirmPaymentResult(true, transaction.PaymentTransactionId,
                 transaction.GatewaySaleReferenceId, transaction.MaskedCardNumber, null);
 
-        if (transaction.Status != PaymentStatus.Verified)
+        if (transaction.PaymentStatusId != EPaymentStatus.Verified)
             throw new ConflictException(
-                $"تراکنش در وضعیت {transaction.Status} است و فقط تراکنش Verify شده قابل تسویه است");
+                $"تراکنش در وضعیت {transaction.PaymentStatusId} است و فقط تراکنش Verify شده قابل تسویه است");
 
-        var gateway = _gatewayFactory.Resolve(transaction.GatewayProvider);
+        var gateway = _gatewayFactory.Resolve(transaction.GatewayProviderId);
+
+        transaction.Touch();
+        try
+        {
+            await _repository.UpdateAsync(transaction,cancellationToken);
+            await _repository.SaveChangesAsync(cancellationToken);
+        }
+        catch(ConcurrencyException)
+        {
+            throw new ConflictException("این تراکنش در حال پردازش دیگری است.");
+        }
+
         var settleResult = await gateway.SettleAsync(transaction, cancellationToken);
 
         if (!settleResult.IsSuccess)
@@ -201,7 +339,7 @@ public class PaymentOrchestrationService
             await _repository.UpdateAsync(transaction, cancellationToken);
             await _repository.SaveChangesAsync(cancellationToken);
             return new ConfirmPaymentResult(
-                false, transaction.Id, null, transaction.MaskedCardNumber, settleResult.ErrorMessage);
+                false, transaction.PaymentTransactionId, null, transaction.MaskedCardNumber, settleResult.ErrorMessage);
         }
 
         if (!string.IsNullOrWhiteSpace(settleResult.MaskedCardNumber))
@@ -209,18 +347,18 @@ public class PaymentOrchestrationService
 
         transaction.MarkSettled();
         _outboxWriter.Add("PaymentSettled", new PaymentSettledEvent(
-            transaction.Id, transaction.OrderId, transaction.AmountInRials,
-            transaction.GatewayProvider.ToString(), transaction.GatewaySaleReferenceId, DateTime.UtcNow));
+            transaction.PaymentTransactionId, transaction.OrderId, transaction.AmountInRials,
+            transaction.GatewayProviderId.ToString(), transaction.GatewaySaleReferenceId, DateTime.UtcNow));
 
         await _repository.UpdateAsync(transaction, cancellationToken);
         await _repository.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
             "تراکنش {TransactionId} برای سفارش {OrderId} با موفقیت تسویه شد",
-            transaction.Id, transaction.OrderId);
+            transaction.PaymentTransactionId, transaction.OrderId);
 
         return new ConfirmPaymentResult(
-            true, transaction.Id, transaction.GatewaySaleReferenceId, transaction.MaskedCardNumber, null);
+            true, transaction.PaymentTransactionId, transaction.GatewaySaleReferenceId, transaction.MaskedCardNumber, null);
     }
 
     /// <summary>
@@ -239,10 +377,13 @@ public class PaymentOrchestrationService
 
     public async Task<PaymentStatusResult> GetStatusByOrderIdAsync(
         long orderId,
+        EPaymentSubscriber paymentSubscriber,
         CancellationToken cancellationToken = default)
     {
         var transaction = await _repository
-            .GetByOrderIdAsync(orderId, cancellationToken)
+            .GetByOrderIdAsync(orderId,
+                paymentSubscriber,
+                cancellationToken)
             ?? throw new NotFoundException($"تراکنشی برای سفارش {orderId} یافت نشد");
 
         return MapToStatusResult(transaction);
@@ -258,19 +399,19 @@ public class PaymentOrchestrationService
         var transaction = await _repository.GetByIdAsync(transactionId, cancellationToken)
             ?? throw new NotFoundException($"تراکنشی با شناسه {transactionId} یافت نشد");
 
-        var gateway = _gatewayFactory.Resolve(transaction.GatewayProvider);
+        var gateway = _gatewayFactory.Resolve(transaction.GatewayProviderId);
         var result = await gateway.ReverseAsync(transaction, cancellationToken);
 
         if (!result.IsSuccess)
             return new ConfirmPaymentResult(
-                false, transaction.Id,
+                false, transaction.PaymentTransactionId,
                 null, transaction.MaskedCardNumber, result.ErrorMessage);
 
         transaction.MarkReversed();
 
         _outboxWriter.Add("PaymentReversed",
             new PaymentReversedEvent(
-                transaction.Id,
+                transaction.PaymentTransactionId,
                 transaction.OrderId,
                 transaction.AmountInRials,
                 DateTime.UtcNow));
@@ -279,7 +420,7 @@ public class PaymentOrchestrationService
         await _repository.SaveChangesAsync(cancellationToken);
 
         return new ConfirmPaymentResult(true,
-            transaction.Id,
+            transaction.PaymentTransactionId,
             transaction.GatewaySaleReferenceId,
             transaction.MaskedCardNumber, null);
     }
@@ -293,23 +434,33 @@ public class PaymentOrchestrationService
     private string BuildCallbackUrl(PaymentTransaction transaction)
     {
         var baseUrl = _callbackOptions.PublicBaseUrl.TrimEnd('/');
-        var provider = transaction.GatewayProvider.ToString().ToLowerInvariant();
+        var provider = transaction.GatewayProviderId.ToString().ToLowerInvariant();
 
-        _logger.LogInformation($"Payment CallBack Url=>-------{baseUrl}/api/v1/payments/callback/{provider}/{transaction.Id}--------------");
-        return $"{baseUrl}/api/v1/payments/callback/{provider}/{transaction.Id}";
+        return $"{baseUrl}/api/v1/payments/callback/{provider}/{transaction.CallbackKey}";
     }
 
     private static PaymentStatusResult MapToStatusResult(PaymentTransaction t) => new(
-        t.Id, t.OrderId, t.AmountInRials, t.Status.ToString(), t.GatewayProvider.ToString(),
-        t.MaskedCardNumber, t.GatewaySaleReferenceId, t.FailureReason, t.CreatedAtUtc);
+        t.PaymentTransactionId, 
+        t.OrderId, 
+        t.AmountInRials,
+        PaymentDisplayNames.Outcome(t.PaymentStatusId), 
+        t.GatewayProviderId,
+        t.MaskedCardNumber, 
+        t.GatewaySaleReferenceId, 
+        t.GatewayRefId, 
+        t.FailureReason, 
+        PaymentDisplayNames.Status(t.PaymentStatusId),
+        PaymentDisplayNames.Provider(t.GatewayProviderId),        
+        t.CreatedAt, 
+        t.ModifiedAt);
 
     public async Task<string> GetReturnUrlAsync(
-        long transactionId,
-        CancellationToken cancellationToken = default)
+    long transactionId,
+    CancellationToken cancellationToken = default)
     {
         var transaction = await _repository.GetByIdAsync(transactionId, cancellationToken)
             ?? throw new NotFoundException($"تراکنشی با شناسه {transactionId} یافت نشد");
 
-        return transaction.ReturnUrl;
+        return (transaction.ReturnUrl);
     }
 }

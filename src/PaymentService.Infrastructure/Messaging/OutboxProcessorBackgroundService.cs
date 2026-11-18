@@ -16,7 +16,9 @@ public class OutboxProcessorBackgroundService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<OutboxProcessorBackgroundService> _logger;
 
-    public OutboxProcessorBackgroundService(IServiceScopeFactory scopeFactory, ILogger<OutboxProcessorBackgroundService> logger)
+    public OutboxProcessorBackgroundService(        
+        IServiceScopeFactory scopeFactory, 
+        ILogger<OutboxProcessorBackgroundService> logger)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -46,8 +48,8 @@ public class OutboxProcessorBackgroundService : BackgroundService
         var publisher = scope.ServiceProvider.GetRequiredService<IMessagePublisher>();
 
         var pendingMessages = await dbContext.OutboxMessage
-            .Where(m => m.PublishedAtUtc == null && m.RetryCount < MaxRetryCount)
-            .OrderBy(m => m.CreatedAtUtc)
+            .Where(m => m.PublishedAt == null && m.RetryCount < MaxRetryCount)
+            .OrderBy(m => m.CreatedAt)
             .Take(BatchSize)
             .ToListAsync(stoppingToken);
 
@@ -60,7 +62,7 @@ public class OutboxProcessorBackgroundService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "انتشار پیام {MessageId} از نوع {EventType} ناموفق بود", message.Id, message.EventType);
+                _logger.LogError(ex, "انتشار پیام {MessageId} از نوع {EventType} ناموفق بود", message.OutboxMessageId, message.EventType);
                 message.MarkFailedAttempt(ex.Message);
             }
         }

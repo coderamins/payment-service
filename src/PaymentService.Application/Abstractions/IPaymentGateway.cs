@@ -52,7 +52,10 @@ public record GatewayCallbackParseResult(
     string ResultCode,
     string? SaleReferenceId,
     string? MaskedCardNumber,
-    string? ErrorMessage);
+    string? ErrorMessage,    
+    decimal? ReportedAmountInRials = null,
+    string? CallbackToken = null,
+    bool VerifyEvenIfUnsuccessful = false);
 
 public record GatewayOperationResult(
     bool IsSuccess, 

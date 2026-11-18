@@ -34,10 +34,6 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
 
         httpContext.Response.StatusCode = problem.Status ?? 500;
 
-        if (exception is GatewayUnavailableException { RetryAfter: { } retryAfter })
-            httpContext.Response.Headers.RetryAfter =
-                Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
-
         await httpContext.Response.WriteAsJsonAsync(problem, cancellationToken);
 
         return true;
@@ -60,10 +56,6 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
 
         var (status, title) = exception switch
         {
-            GatewayUnavailableException =>
-                (StatusCodes.Status503ServiceUnavailable,
-                    "Gateway Unavailable"),
-
             ValidationException =>
                 (StatusCodes.Status400BadRequest,
                     "Validation Failed"),
@@ -88,6 +80,18 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
                 (StatusCodes.Status403Forbidden,
                     "Forbidden"),
 
+            GatewayUnavailableException => 
+                (StatusCodes.Status503ServiceUnavailable, 
+                "Gateway Unavailable"),
+
+            GatewayCommunicationException => 
+                (StatusCodes.Status502BadGateway, 
+                "Gateway Error"),
+
+            UnsupportedGatewayException => 
+                (StatusCodes.Status400BadRequest, 
+                "Unsupported Gateway"),
+
             _ =>
                 (StatusCodes.Status500InternalServerError,
                     "Internal Server Error")
@@ -97,7 +101,9 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
         {
             Status = status,
             Title = title,
-            Detail = exception.Message,
+            Detail = status == StatusCodes.Status500InternalServerError
+                    ? "خطای داخلی رخ داد. با پشتیبانی تماس بگیرید."
+                    : exception.Message,
             Instance = context.Request.Path
         };
 

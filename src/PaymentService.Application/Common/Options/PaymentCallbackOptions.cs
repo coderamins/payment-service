@@ -7,4 +7,5 @@ public class PaymentCallbackOptions
 {
     public const string SectionName = "Payment";
     public string PublicBaseUrl { get; set; } = default!;
+    public string[] AllowedReturnHosts { get; set; } = Array.Empty<string>();
 }

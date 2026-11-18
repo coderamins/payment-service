@@ -1,28 +1,30 @@
 using PaymentService.Domain.Enums;
+using System.Text.Json;
 
 namespace PaymentService.Domain.Entities;
 
 public class PaymentTransaction
 {
-    public long Id { get; private set; }
+    public long PaymentTransactionId { get; private set; }
 
+    public Guid CallbackKey { get; private set; } = Guid.NewGuid();
     /// <summary>
     /// شماره سفارش/فاکتور در سیستم مبدا (مثلاً شماره سفارش خرید خودرو).
     /// </summary>
-    public long OrderId { get; private set; } = default!;
+    public long OrderId { get; private set; } 
 
     /// <summary>
     /// سرویس استفاده کننده
     /// </summary>
-    public string RequestingService { get; private set; } = default!;
+    public EPaymentSubscriber PaymentSubscriberId { get; private set; } 
 
     /// <summary>مبلغ به ریال</summary>
-    public long AmountInRials { get; private set; }
+    public decimal AmountInRials { get; private set; }
 
     /// <summary>درگاهی که این تراکنش از طریق آن پردازش شده/می‌شود</summary>
-    public GatewayProvider GatewayProvider { get; private set; }
+    public GatewayProvider GatewayProviderId { get; private set; }
 
-    public PaymentStatus Status { get; private set; }
+    public EPaymentStatus PaymentStatusId { get; private set; }
 
     /// <summary>شماره مرجع/RefId که درگاه هنگام bpPayRequest برمی‌گرداند</summary>
     public string? GatewayRefId { get; private set; }
@@ -41,17 +43,28 @@ public class PaymentTransaction
 
     public string ReturnUrl { get; private set; } = default!;
 
-    public DateTime CreatedAtUtc { get; private set; }
-    public DateTime? UpdatedAtUtc { get; private set; }
+    /// <summary>ترمینال تعیین‌شده توسط سیستم مبدا؛ null = ترمینال پیش‌فرض تنظیمات درگاه</summary>
+    public int? TerminalNumber { get; private set; }
+
+    /// <summary>تسهیم داینامیک (snapshot سهم‌ها به ریال)؛ null = بدون تسهیم یا تسهیم ثابت سمت بانک</summary>
+    public string? SplitsJson { get; private set; }
+
+    public DateTime CreatedAt { get; private set; }
+    public DateTime? ModifiedAt { get; private set; }
+    public byte[] RowVersion { get; private set; } = default!;
+
+    public void Touch() => ModifiedAt = DateTime.UtcNow;
 
     private PaymentTransaction() { } 
 
     public static PaymentTransaction Create(
         long orderId,
-        string requestingService,
-        long amountInRials,
+        EPaymentSubscriber paymentSubscriber,
+        decimal amountInRials,
         string returnUrl,
-        GatewayProvider gatewayProvider)
+        GatewayProvider gatewayProvider,
+        int? terminalNumber = null,
+        IReadOnlyList<PaymentSplitShare>? splits = null)
     {
         //if (orderId==null)
         //    throw new ArgumentException("شماره سفارش نمی‌تواند خالی باشد", nameof(orderId));
@@ -62,29 +75,39 @@ public class PaymentTransaction
         if (string.IsNullOrWhiteSpace(returnUrl) || !Uri.IsWellFormedUriString(returnUrl, UriKind.Absolute))
             throw new ArgumentException("آدرس بازگشت (ReturnUrl) نامعتبر است", nameof(returnUrl));
 
+        if (splits is { Count: > 0 } && splits.Sum(s => s.AmountInRials) != amountInRials)
+            throw new ArgumentException("مجموع سهم‌های تسهیم باید برابر مبلغ تراکنش باشد", nameof(splits));
+
         return new PaymentTransaction
         {
             OrderId = orderId,
-            RequestingService = requestingService,
+            PaymentSubscriberId = paymentSubscriber,
             AmountInRials = amountInRials,
             ReturnUrl = returnUrl,
-            GatewayProvider = gatewayProvider,
-            Status = PaymentStatus.Created,
-            CreatedAtUtc = DateTime.UtcNow,
+            GatewayProviderId = gatewayProvider,
+            TerminalNumber = terminalNumber,
+            SplitsJson = splits is { Count: > 0 } ? JsonSerializer.Serialize(splits) : null,
+            PaymentStatusId = EPaymentStatus.Created,
+            CreatedAt = DateTime.UtcNow,
         };
     }
+
+    public IReadOnlyList<PaymentSplitShare> GetSplits()
+    => string.IsNullOrEmpty(SplitsJson)
+        ? Array.Empty<PaymentSplitShare>()
+        : JsonSerializer.Deserialize<List<PaymentSplitShare>>(SplitsJson) ?? new List<PaymentSplitShare>();
 
     public void SetMaskedCardNumber(string maskedCardNumber)
     {
         MaskedCardNumber = maskedCardNumber;
-        UpdatedAtUtc = DateTime.UtcNow;
+        ModifiedAt = DateTime.UtcNow;
     }
 
     public void MarkRedirectedToGateway(string gatewayRefId)
     {
         GatewayRefId = gatewayRefId;
-        Status = PaymentStatus.RedirectedToGateway;
-        UpdatedAtUtc = DateTime.UtcNow;
+        PaymentStatusId = EPaymentStatus.RedirectedToGateway;
+        ModifiedAt = DateTime.UtcNow;
     }
 
     public void MarkCallbackReceived(string resultCode, string? saleReferenceId, string? maskedCardNumber)
@@ -92,39 +115,45 @@ public class PaymentTransaction
         GatewayResultCode = resultCode;
         GatewaySaleReferenceId = saleReferenceId;
         MaskedCardNumber = maskedCardNumber;
-        Status = PaymentStatus.CallbackReceived;
-        UpdatedAtUtc = DateTime.UtcNow;
+        PaymentStatusId = EPaymentStatus.CallbackReceived;
+        ModifiedAt = DateTime.UtcNow;
     }
 
     public void MarkVerified()
     {
-        Status = PaymentStatus.Verified;
-        UpdatedAtUtc = DateTime.UtcNow;
+        PaymentStatusId = EPaymentStatus.Verified;
+        ModifiedAt = DateTime.UtcNow;
     }
 
     public void MarkSettled()
     {
-        Status = PaymentStatus.Settled;
-        UpdatedAtUtc = DateTime.UtcNow;
+        PaymentStatusId = EPaymentStatus.Settled;
+        ModifiedAt = DateTime.UtcNow;
     }
 
     public void MarkFailed(string reason, string? gatewayResultCode = null)
     {
         FailureReason = reason;
         GatewayResultCode = gatewayResultCode ?? GatewayResultCode;
-        Status = PaymentStatus.Failed;
-        UpdatedAtUtc = DateTime.UtcNow;
+        PaymentStatusId = EPaymentStatus.Failed;
+        ModifiedAt = DateTime.UtcNow;
     }
 
     public void MarkCanceledByUser()
     {
-        Status = PaymentStatus.CanceledByUser;
-        UpdatedAtUtc = DateTime.UtcNow;
+        PaymentStatusId = EPaymentStatus.CanceledByUser;
+        ModifiedAt = DateTime.UtcNow;
     }
 
     public void MarkReversed()
     {
-        Status = PaymentStatus.Reversed;
-        UpdatedAtUtc = DateTime.UtcNow;
+        PaymentStatusId = EPaymentStatus.Reversed;
+        ModifiedAt = DateTime.UtcNow;
+    }
+
+    public void MarkAmountMismatch()
+    {
+        PaymentStatusId = EPaymentStatus.AmountMismatch;
+        ModifiedAt = DateTime.UtcNow;
     }
 }

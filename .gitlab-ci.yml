@@ -1,0 +1,10 @@
+include:
+  - project: cicd/ci-templates
+    ref: main
+    file:
+      - templates/build-deploy-dotnet.yml
+      - templates/sonar-dotnet.yml
+
+variables:
+  APP_NAME: payment-service
+  DOTNET_PROJECT: src/PaymentService.API/PaymentService.API.csproj

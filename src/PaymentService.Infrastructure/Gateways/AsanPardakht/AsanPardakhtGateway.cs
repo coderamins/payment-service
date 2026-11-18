@@ -1,6 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
 using PaymentService.Application.Abstractions;
-using PaymentService.Application.Common.Exceptions;
 using PaymentService.Domain.Entities;
 using PaymentService.Domain.Enums;
 using PaymentService.Infrastructure.Gateways.Helpers;
@@ -39,11 +38,11 @@ public class AsanPardakhtGateway : IPaymentGateway
         var additionalData = BuildAdditionalData(payerNationalCode);
 
         var (isSuccess, token, statusCode) = await _apiClient.RequestTokenAsync(
-            transaction.Id, transaction.AmountInRials,
-            callbackUrl, additionalData, cancellationToken);
-
-        if (!isSuccess && statusCode >= 500)
-            throw new GatewayCommunicationException($"خطای سرور آسان‌پرداخت (HTTP {statusCode})");
+            transaction.PaymentTransactionId, 
+            transaction.AmountInRials,
+            callbackUrl, 
+            additionalData, 
+            cancellationToken);
 
         if (!isSuccess || string.IsNullOrWhiteSpace(token))
             return new GatewayRequestResult(false, null, null, MapTokenError(statusCode));
@@ -114,7 +113,7 @@ public class AsanPardakhtGateway : IPaymentGateway
         if (payGateTranId is null)
             return new GatewayOperationResult(false, null, "شناسه مرجع تراکنش در دسترس نیست");
 
-        var useCancel = transaction.Status is PaymentStatus.Verified or PaymentStatus.Settled;
+        var useCancel = transaction.PaymentStatusId is EPaymentStatus.Verified or EPaymentStatus.Settled;
 
         var response = useCancel
             ? await _apiClient.CancelAsync(payGateTranId.Value, cancellationToken)
@@ -134,7 +133,7 @@ public class AsanPardakhtGateway : IPaymentGateway
         if (long.TryParse(transaction.GatewaySaleReferenceId, out var stored) && stored > 0)
             return stored;
 
-        var tranResult = await _apiClient.GetTransactionResultAsync(transaction.Id, ct);
+        var tranResult = await _apiClient.GetTransactionResultAsync(transaction.PaymentTransactionId, ct);
         return tranResult?.PayGateTranId > 0 ? tranResult.PayGateTranId : null;
     }
 

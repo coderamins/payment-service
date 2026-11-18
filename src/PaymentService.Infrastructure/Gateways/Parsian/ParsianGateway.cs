@@ -26,10 +26,12 @@ public class ParsianGateway : IPaymentGateway
         string? payerNationalCode = null,
         CancellationToken cancellationToken = default)
     {
-        // OrderId پارسیان باید long و یکتا باشد؛ همان شناسه تراکنش خودمان
         var response = await _apiClient.SalePaymentAsync(
-            transaction.Id, transaction.AmountInRials, callbackUrl,
-            $"orderRef:{transaction.OrderId}", cancellationToken);
+            transaction.PaymentTransactionId, 
+            transaction.AmountInRials, 
+            callbackUrl,
+            $"orderRef:{transaction.OrderId}", 
+            cancellationToken);
 
         if (response.Status != 0 || response.Token <= 0)
         {
@@ -50,6 +52,11 @@ public class ParsianGateway : IPaymentGateway
     {
         var statusText = GetParameter(rawParameters, "status");
         var rrnText = GetParameter(rawParameters, "RRN");
+        var token = GetParameter(rawParameters, "Token");
+
+        rawParameters.TryGetValue("Amount", out var amountRaw);
+
+        long? reportedAmount = long.TryParse(amountRaw, out var amount) ? amount : null;
 
         var hasStatus = int.TryParse(statusText, out var status);
         var isSuccess = hasStatus && status == 0
@@ -63,7 +70,10 @@ public class ParsianGateway : IPaymentGateway
             MaskedCardNumber: null,
             isSuccess ? null : (hasStatus && status == -138
                 ? "پرداخت توسط کاربر لغو شد"
-                : MapError(hasStatus ? status : -1, null)));
+                : MapError(hasStatus ? status : -1, null)),
+            reportedAmount,
+            token
+            );
     }
 
     /// <summary>پارسیان Verify جدا ندارد؛ Confirm همان اقدام نهایی است و در SettleAsync انجام می‌شود.</summary>
@@ -79,7 +89,7 @@ public class ParsianGateway : IPaymentGateway
 
         // مبلغ باید دقیقاً همان مبلغ زمان دریافت توکن باشد
         var response = await _apiClient.ConfirmAsync(
-            token, transaction.Id, transaction.AmountInRials, cancellationToken);
+            token, transaction.PaymentTransactionId, transaction.AmountInRials, cancellationToken);
 
         var ok = response.Status == 0;
         return new GatewayOperationResult(

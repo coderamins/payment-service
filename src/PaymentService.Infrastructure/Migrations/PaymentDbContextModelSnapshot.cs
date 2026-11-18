@@ -24,11 +24,11 @@ namespace PaymentService.Infrastructure.Migrations
 
             modelBuilder.Entity("PaymentService.Domain.Entities.IdempotencyRecord", b =>
                 {
-                    b.Property<Guid>("Id")
+                    b.Property<Guid>("IdempotencyRecordId")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<DateTime>("CreatedAtUtc")
+                    b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("IdempotencyKey")
@@ -48,12 +48,13 @@ namespace PaymentService.Infrastructure.Migrations
 
                     b.Property<string>("ResponseBodyJson")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
 
                     b.Property<int>("ResponseStatusCode")
                         .HasColumnType("int");
 
-                    b.HasKey("Id");
+                    b.HasKey("IdempotencyRecordId");
 
                     b.HasIndex("IdempotencyKey", "RequestPath")
                         .IsUnique();
@@ -63,11 +64,11 @@ namespace PaymentService.Infrastructure.Migrations
 
             modelBuilder.Entity("PaymentService.Domain.Entities.OutboxMessage", b =>
                 {
-                    b.Property<Guid>("Id")
+                    b.Property<Guid>("OutboxMessageId")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<DateTime>("CreatedAtUtc")
+                    b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("EventType")
@@ -83,42 +84,42 @@ namespace PaymentService.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<DateTime?>("PublishedAtUtc")
+                    b.Property<DateTime?>("PublishedAt")
                         .HasColumnType("datetime2");
 
                     b.Property<int>("RetryCount")
                         .HasColumnType("int");
 
-                    b.HasKey("Id");
+                    b.HasKey("OutboxMessageId");
 
-                    b.HasIndex("CreatedAtUtc");
+                    b.HasIndex("CreatedAt");
 
                     b.ToTable("OutboxMessage", (string)null);
                 });
 
             modelBuilder.Entity("PaymentService.Domain.Entities.PaymentTransaction", b =>
                 {
-                    b.Property<Guid>("Id")
+                    b.Property<long>("PaymentTransactionId")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<long>("AmountInRials")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime>("CreatedAtUtc")
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("PaymentTransactionId"), 100000000L);
+
+                    b.Property<decimal>("AmountInRials")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<Guid>("CallbackKey")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("FailureReason")
                         .HasMaxLength(512)
                         .HasColumnType("nvarchar(512)");
 
-                    b.Property<long>("GatewayInvoiceId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("GatewayProvider")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("nvarchar(32)");
+                    b.Property<byte>("GatewayProviderId")
+                        .HasColumnType("tinyint");
 
                     b.Property<string>("GatewayRefId")
                         .HasMaxLength(128)
@@ -136,34 +137,49 @@ namespace PaymentService.Infrastructure.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)");
 
-                    b.Property<string>("OrderId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
+                    b.Property<DateTime?>("ModifiedAt")
+                        .HasColumnType("datetime2");
 
-                    b.Property<string>("RequestingService")
-                        .IsRequired()
+                    b.Property<long>("OrderId")
                         .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
+                        .HasColumnType("bigint");
+
+                    b.Property<byte>("PaymentStatusId")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte>("PaymentSubscriberId")
+                        .HasColumnType("tinyint");
 
                     b.Property<string>("ReturnUrl")
                         .IsRequired()
                         .HasMaxLength(2048)
                         .HasColumnType("nvarchar(2048)");
 
-                    b.Property<string>("Status")
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
                         .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("nvarchar(32)");
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
 
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<string>("SplitsJson")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
 
-                    b.HasKey("Id");
+                    b.Property<int?>("TerminalNumber")
+                        .HasColumnType("int");
+
+                    b.HasKey("PaymentTransactionId");
+
+                    b.HasIndex("CallbackKey");
 
                     b.HasIndex("GatewayRefId");
 
                     b.HasIndex("OrderId");
+
+                    b.HasIndex("PaymentSubscriberId", "OrderId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_PaymentTransaction_ActivePerOrder")
+                        .HasFilter("[PaymentStatusId] IN (0, 1, 2, 3, 4)");
 
                     b.ToTable("PaymentTransaction", (string)null);
                 });

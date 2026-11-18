@@ -9,7 +9,11 @@ using PaymentService.Infrastructure.Gateways;
 using PaymentService.Infrastructure.Gateways.AsanPardakht;
 using PaymentService.Infrastructure.Gateways.Health;
 using PaymentService.Infrastructure.Gateways.Mellat;
+using PaymentService.Infrastructure.Gateways.Melli;
+using PaymentService.Infrastructure.Gateways.PardakhtNovin;
 using PaymentService.Infrastructure.Gateways.Parsian;
+using PaymentService.Infrastructure.Gateways.Pasargad;
+using PaymentService.Infrastructure.Gateways.Saman;
 using PaymentService.Infrastructure.Gateways.Shaparak;
 using PaymentService.Infrastructure.Messaging;
 using PaymentService.Infrastructure.Persistence;
@@ -38,19 +42,31 @@ public static class ServiceCollectionExtensions
                 $"تنظیم '{PaymentCallbackOptions.SectionName}:{nameof(PaymentCallbackOptions.PublicBaseUrl)}' " +
                 "باید یک آدرس مطلق معتبر باشد (مثلاً https://api.example.com)");
 
+        if (callbackOptions.AllowedReturnHosts is null || callbackOptions.AllowedReturnHosts.Length == 0)
+            throw new InvalidOperationException(
+                $"تنظیم '{PaymentCallbackOptions.SectionName}:{nameof(PaymentCallbackOptions.AllowedReturnHosts)}' " +
+                "باید حداقل یک دامنه داشته باشد (برای جلوگیری از Open Redirect)");
+
         services.AddSingleton(callbackOptions);
 
         services.AddScoped<PaymentOrchestrationService>();
 
         services.AddScoped<IPaymentGatewayFactory, PaymentGatewayFactory>();
 
-        services.AddGatewayHealth(configuration);
 
         // ===================== درگاه‌ها (هر کدام در فایل خودش) =====================
         services.AddMellatGateway(configuration);
         services.AddAsanPardakhtGateway(configuration);
         services.AddParsianGateway(configuration);
-        // درگاه بعدی: services.AddXxxGateway(configuration);
+        services.AddSamanGateway(configuration);
+        services.AddPardakhtNovinGateway(configuration);
+        services.AddMelliGateway(configuration);
+        services.AddPasargadGateway(configuration);
+
+        services.AddGatewayHealth(configuration);
+
+        // ثبت ورکرها (reconciliation و ...)
+        services.AddPaymentServiceWorkers();
 
         // تنظیمات شاپرک (مشترک؛ آسان‌پرداخت از آن استفاده می‌کند)
         services.Configure<ShaparakOptions>(configuration.GetSection(ShaparakOptions.SectionName));

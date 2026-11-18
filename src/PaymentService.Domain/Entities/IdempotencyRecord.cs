@@ -5,7 +5,7 @@ namespace PaymentService.Domain.Entities;
 /// </summary>
 public class IdempotencyRecord
 {
-    public Guid Id { get; private set; }
+    public Guid IdempotencyRecordId { get; private set; }
 
     public string IdempotencyKey { get; private set; } = default!;
 
@@ -15,7 +15,7 @@ public class IdempotencyRecord
     public int ResponseStatusCode { get; private set; }
     public string ResponseBodyJson { get; private set; } = default!;
 
-    public DateTime CreatedAtUtc { get; private set; }
+    public DateTime CreatedAt { get; private set; }
 
     private IdempotencyRecord() { } // برای EF Core
 
@@ -25,13 +25,13 @@ public class IdempotencyRecord
     {
         return new IdempotencyRecord
         {
-            Id = Guid.NewGuid(),
+            IdempotencyRecordId = Guid.NewGuid(),
             IdempotencyKey = idempotencyKey,
             RequestPath = requestPath,
             RequestBodyHash = requestBodyHash,
             ResponseStatusCode = responseStatusCode,
             ResponseBodyJson = responseBodyJson,
-            CreatedAtUtc = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow
         };
     }
 }
