@@ -58,32 +58,52 @@ public class AsanPardakhtGateway : IPaymentGateway
 
     public GatewayCallbackParseResult ParseCallback(IDictionary<string, string> rawParameters)
     {
-        var payGateTranId = GetParameter(rawParameters, "PayGateTranID");
-
-        var isSuccess = long.TryParse(payGateTranId, out var tranId) && tranId > 0;
+        var hint = GetParameter(rawParameters, "PayGateTranID");
+        var looksPaid = hint is { Length: > 0 and <= 18 } && long.TryParse(hint, out var id) && id > 0;
 
         return new GatewayCallbackParseResult(
-            isSuccess,
-            isSuccess ? "0" : "911",
-            SaleReferenceId: payGateTranId,   // در مراحل Verify/Settle به همین نیاز داریم
-            MaskedCardNumber: null,           // فقط با بازگشایی ReturningParams در دسترس است
-            isSuccess ? null : "پرداخت توسط کاربر لغو شد یا ناموفق بود");
+            looksPaid,
+            looksPaid ? "0" : "911",
+            SaleReferenceId: null,   
+            MaskedCardNumber: null,           
+            looksPaid ? null : "پرداخت توسط کاربر لغو شد یا ناموفق بود",
+            null);
     }
 
     public async Task<GatewayOperationResult> VerifyAsync(
         PaymentTransaction transaction, CancellationToken cancellationToken = default)
     {
-        var payGateTranId = await ResolvePayGateTranIdAsync(transaction, cancellationToken);
-        if (payGateTranId is null)
-            return new GatewayOperationResult(false, null, "شناسه مرجع تراکنش در دسترس نیست");
+        var tran=await _apiClient.GetTransactionResultAsync(transaction.PaymentTransactionId, cancellationToken);
+        if (tran is null || tran.PayGateTranId <= 0)
+            return new GatewayOperationResult(false, "NOT_FOUND", "تراکنش موفقی نزد بانک برای این تراکنش یافت نشد .");
 
-        var response = await _apiClient.VerifyAsync(payGateTranId.Value, cancellationToken);
+        if(tran.Amount!=transaction.AmountInRials)
+        {
+            _logger.LogCritical(
+                "مغایرت مبلغ در آسان‌پرداخت. تراکنش {Id} مبلغ ما {Ours} مبلغ بانک {Theirs}",
+                transaction.PaymentTransactionId,
+                transaction.AmountInRials,
+                tran.Amount);
+
+            try
+            {
+                await _apiClient.ReverseAsync(tran.PayGateTranId, cancellationToken);
+            }
+            catch (Exception ex) { _logger.LogError(ex, "Reverse بعد از مغایرت مبلغ ناموفق بود ."); }
+
+            return new GatewayOperationResult(false, "AMOUNT_MISMATCH", "مغایرت مبلغ با بانک");
+        }
+
+        var response = await _apiClient.VerifyAsync(tran.PayGateTranId, cancellationToken);
         var code = (int)response.StatusCode;
 
         if (code == 200 || code == 472)
             return new GatewayOperationResult(true, code.ToString(), null);
 
-        return new GatewayOperationResult(false, code.ToString(), MapVerifyError(code));
+        return new GatewayOperationResult(false, GatewayResultCodes.AmountMismatch, "مغایرت مبلغ با بانک")
+        {
+            ReportedAmountInRials = tran.Amount
+        };
     }
 
     public async Task<GatewayOperationResult> SettleAsync(
@@ -96,7 +116,7 @@ public class AsanPardakhtGateway : IPaymentGateway
         var response = await _apiClient.SettlementAsync(payGateTranId.Value, cancellationToken);
         var code = (int)response.StatusCode;
 
-        // ۴۷۴ یعنی قبلاً تسویه شده 
+        // 473 یعنی قبلاً تسویه شده 
         if (code == 200 || code == 474 || code == 476)
             return new GatewayOperationResult(true, code.ToString(), null);
 
@@ -130,11 +150,8 @@ public class AsanPardakhtGateway : IPaymentGateway
 
     private async Task<long?> ResolvePayGateTranIdAsync(PaymentTransaction transaction, CancellationToken ct)
     {
-        if (long.TryParse(transaction.GatewaySaleReferenceId, out var stored) && stored > 0)
-            return stored;
-
-        var tranResult = await _apiClient.GetTransactionResultAsync(transaction.PaymentTransactionId, ct);
-        return tranResult?.PayGateTranId > 0 ? tranResult.PayGateTranId : null;
+        var tran = await _apiClient.GetTransactionResultAsync(transaction.PaymentTransactionId, ct);
+        return tran is { PayGateTranId: > 0 } ? tran.PayGateTranId : null;
     }
 
     private static string MapTokenError(int code) => code switch

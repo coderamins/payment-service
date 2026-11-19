@@ -242,33 +242,9 @@ public class PaymentOrchestrationService
         if (parsed.IsSuccessfulPayment
             && parsed.ReportedAmountInRials is decimal reported
             && reported != transaction.AmountInRials)
-        {
-            transaction.MarkAmountMismatch();
-            _outboxWriter.Add("AmountMismatch", new PaymentAmountMismatchEvent(
-                transaction.PaymentTransactionId, transaction.OrderId, transaction.AmountInRials,
-                parsed.ReportedAmountInRials ?? 0,
-                transaction.GatewayProviderId.ToString(), DateTime.UtcNow));
-
-            try
-            {
-                var rev = await gateway.ReverseAsync(transaction, cancellationToken);
-                if (rev.IsSuccess) transaction.MarkReversed();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Reverse بعد از مغایرت مبلغ ناموفق بود: {Id}", transaction.PaymentTransactionId);
-            }
-
-            await _repository.UpdateAsync(transaction, cancellationToken);
-            await _repository.SaveChangesAsync(cancellationToken);
-            return new ConfirmPaymentResult(
-                false, transaction.PaymentTransactionId, null, null,
-                parsed.ErrorMessage ?? "مغایرت مبلغ سفارش با مبلغ برگشتی از بانک");
-        }
-        else if (parsed.IsSuccessfulPayment && parsed.ReportedAmountInRials is null)
-            _logger.LogWarning("بانک مبلغ تراکنش {Id} را در callback نفرستاد؛ مقایسه انجام نشد", transaction.PaymentTransactionId);
-
-        verifyResult ??= await gateway.VerifyAsync(transaction, cancellationToken);
+            return await HandleAmountMismatchAsync(
+                transaction, gateway, reported, parsed.ErrorMessage, cancellationToken);
+                verifyResult ??= await gateway.VerifyAsync(transaction, cancellationToken);
 
         if (!verifyResult.IsSuccess)
         {
@@ -437,6 +413,37 @@ public class PaymentOrchestrationService
         var provider = transaction.GatewayProviderId.ToString().ToLowerInvariant();
 
         return $"{baseUrl}/api/v1/payments/callback/{provider}/{transaction.CallbackKey}";
+    }
+
+    private async Task<ConfirmPaymentResult> HandleAmountMismatchAsync(
+    PaymentTransaction transaction,
+    IPaymentGateway gateway,
+    decimal reportedAmount,
+    string? message,
+    CancellationToken cancellationToken)
+    {
+        transaction.MarkAmountMismatch();
+        _outboxWriter.Add("AmountMismatch", new PaymentAmountMismatchEvent(
+            transaction.PaymentTransactionId, transaction.OrderId, transaction.AmountInRials,
+            reportedAmount,
+            transaction.GatewayProviderId.ToString(), DateTime.UtcNow));
+
+        try
+        {
+            var rev = await gateway.ReverseAsync(transaction, cancellationToken);
+            if (rev.IsSuccess) transaction.MarkReversed();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Reverse بعد از مغایرت مبلغ ناموفق بود: {Id}", transaction.PaymentTransactionId);
+        }
+
+        await _repository.UpdateAsync(transaction, cancellationToken);
+        await _repository.SaveChangesAsync(cancellationToken);
+
+        return new ConfirmPaymentResult(
+            false, transaction.PaymentTransactionId, null, null,
+            message ?? "مغایرت مبلغ سفارش با مبلغ برگشتی از بانک");
     }
 
     private static PaymentStatusResult MapToStatusResult(PaymentTransaction t) => new(

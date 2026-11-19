@@ -61,7 +61,13 @@ public record GatewayOperationResult(
     bool IsSuccess, 
     string? ResultCode,
     string? ErrorMessage,
-    string? MaskedCardNumber = null);
+    string? MaskedCardNumber = null,
+    decimal? ReportedAmountInRials=null);
+
+public static class GatewayResultCodes
+{
+    public const string AmountMismatch = "AMOUNT_MISMATCH";
+}
 
 //string? MaskedCardNumber = null
 //اینجا این اضافه شد چون پارسیان موقع 
