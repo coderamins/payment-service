@@ -246,6 +246,11 @@ public class PaymentOrchestrationService
                 transaction, gateway, reported, parsed.ErrorMessage, cancellationToken);
                 verifyResult ??= await gateway.VerifyAsync(transaction, cancellationToken);
 
+        if (!verifyResult.IsSuccess && verifyResult.ResultCode == GatewayResultCodes.AmountMismatch)
+            return await HandleAmountMismatchAsync(
+                transaction, gateway, verifyResult.ReportedAmountInRials ?? 0,
+                verifyResult.ErrorMessage, cancellationToken);
+
         if (!verifyResult.IsSuccess)
         {
             transaction.MarkFailed(verifyResult.ErrorMessage ?? "خطا در تایید تراکنش نزد بانک", verifyResult.ResultCode);

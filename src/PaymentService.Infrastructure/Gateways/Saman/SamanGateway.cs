@@ -76,7 +76,7 @@ public class SamanGateway : IPaymentGateway
 
         long? reportedAmount = long.TryParse(amountRaw, out var amount) ? amount : null;
 
-        if (!int.TryParse(state, out var iStatusCode)) iStatusCode = -999;
+        if (!int.TryParse(statusText, out var iStatusCode)) iStatusCode = -999;
 
         var isSuccess = (iStatusCode == 2);
 
@@ -99,18 +99,27 @@ public class SamanGateway : IPaymentGateway
     public async Task<GatewayOperationResult> SettleAsync(
         PaymentTransaction transaction, CancellationToken cancellationToken = default)
     {
-        if (!long.TryParse(transaction.GatewayRefId, out var token))
-            return new GatewayOperationResult(false, null, "توکن سامان برای این تراکنش در دسترس نیست");
+        if (string.IsNullOrWhiteSpace(transaction.GatewaySaleReferenceId))
+            return new GatewayOperationResult(false, "NO_SALE_REF", "شناسه مرجع سامان موجود نیست");
 
-        // مبلغ باید دقیقاً همان مبلغ زمان دریافت توکن باشد
         var response = await _apiClient.ConfirmAsync(
             transaction.GatewaySaleReferenceId, _options.TerminalId, cancellationToken);
 
-        var ok = response.ResultCode == 0;
-        return new GatewayOperationResult(
-            ok, response.ResultCode.ToString(),
-            response.ResultDescription,
-            response.TransactionDetail.MaskedPan);
+        if (response.ResultCode != 0)
+            return new GatewayOperationResult(false, response.ResultCode.ToString(),
+                MapResultCodeMessage(response.ResultCode));
+
+        var detail = response.TransactionDetail;
+        if (detail is null || detail.OrginalAmount != transaction.AmountInRials)
+        {
+            _logger.LogCritical("مغایرت مبلغ سامان. تراکنش {Id} ما {Ours} بانک {Theirs}",
+                transaction.PaymentTransactionId, transaction.AmountInRials, detail?.OrginalAmount);
+            try { await _apiClient.ReversalAsync(transaction.GatewaySaleReferenceId, _options.TerminalId, cancellationToken); }
+            catch (Exception ex) { _logger.LogError(ex, "Reverse بعد از مغایرت ناموفق بود"); }
+            return new GatewayOperationResult(false, GatewayResultCodes.AmountMismatch, "مغایرت مبلغ با بانک");
+        }
+
+        return new GatewayOperationResult(true, "0", null, detail.MaskedPan);
     }
 
     public async Task<GatewayOperationResult> ReverseAsync(
@@ -126,7 +135,7 @@ public class SamanGateway : IPaymentGateway
         return new GatewayOperationResult(
             ok, response.ResultCode.ToString(),
             response.ResultDescription,
-            response.TransactionDetail.MaskedPan);
+            response.TransactionDetail?.MaskedPan);
     }
 
     private static string? GetParameter(IDictionary<string, string> parameters, string name)

@@ -97,14 +97,13 @@ public class PasargadGateway : IPaymentGateway
         // مبلغ در callback نیست؛ اینجا با مبلغ سفارش مقایسه می‌شود
         if (data?.Amount is long bankAmount && bankAmount != (long)transaction.AmountInRials)
         {
-            _logger.LogError(
-                "مغایرت مبلغ پاسارگاد. تراکنش {Id} سفارش={Expected} بانک={Actual}",
+            _logger.LogError("مغایرت مبلغ پاسارگاد. تراکنش {Id} سفارش={Expected} بانک={Actual}",
                 transaction.PaymentTransactionId, (long)transaction.AmountInRials, bankAmount);
 
-            await TryReverseQuietlyAsync(transaction, cancellationToken);
-
             return new GatewayOperationResult(
-                false, "amount-mismatch", "مغایرت مبلغ سفارش با مبلغ تایید‌شده توسط بانک", data.MaskedCardNumber);
+                false, GatewayResultCodes.AmountMismatch, "مغایرت مبلغ سفارش با مبلغ تایید‌شده توسط بانک",
+                data.MaskedCardNumber)
+            { ReportedAmountInRials = bankAmount };
         }
 
         return new GatewayOperationResult(true, "0", null, data?.MaskedCardNumber);
@@ -149,18 +148,6 @@ public class PasargadGateway : IPaymentGateway
 
     private static string Invoice(PaymentTransaction t)
         => t.PaymentTransactionId.ToString(CultureInfo.InvariantCulture);
-
-    private async Task TryReverseQuietlyAsync(PaymentTransaction transaction, CancellationToken ct)
-    {
-        try
-        {
-            await ReverseAsync(transaction, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Reverse بعد از مغایرت مبلغ ناموفق بود: {Id}", transaction.PaymentTransactionId);
-        }
-    }
 
     private static string? GetParameter(IDictionary<string, string> parameters, string name)
     {

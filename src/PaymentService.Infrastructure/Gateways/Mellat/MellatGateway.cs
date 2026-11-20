@@ -47,7 +47,8 @@ public class MellatGateway : IPaymentGateway
         string? payerNationalCode = null,
         CancellationToken cancellationToken = default)
     {
-        var now = DateTime.Now;
+        var tz = TimeZoneInfo.FindSystemTimeZoneById("Asia/Tehran");
+        var now = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
 
         var mellatOrderId = transaction.PaymentTransactionId.ToString();
 
@@ -85,7 +86,7 @@ public class MellatGateway : IPaymentGateway
         rawParameters.TryGetValue("CardHolderPan", out var maskedCard);
         rawParameters.TryGetValue("RefId", out var refId);
 
-        rawParameters.TryGetValue("Amount", out var amountRaw);
+        rawParameters.TryGetValue("FinalAmount", out var amountRaw);
 
         long? reportedAmount = long.TryParse(amountRaw, out var amount) ? amount : null;
 
@@ -98,7 +99,7 @@ public class MellatGateway : IPaymentGateway
             maskedCard,
             isSuccess ? null : MapErrorMessage(resCode ?? "unknown"),
             reportedAmount,
-            refId,
+            refId ?? string.Empty,
             true
             );
     }
@@ -124,9 +125,12 @@ public class MellatGateway : IPaymentGateway
         PaymentTransaction transaction,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(transaction.GatewaySaleReferenceId))
+            return new GatewayOperationResult(false, "NO_SALE_REF", "شناسه مرجع فروش موجود نیست");
+
         var mellatOrderId = transaction.PaymentTransactionId.ToString();
         var resultCode = (await _soapClient.BpSettleRequestAsync(
-            mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId!, cancellationToken))?.Trim();
+            mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId, cancellationToken))?.Trim();
 
         //--- کد 45 وقتی برمیگرده که دفه اول تسویه شده ولی نتیجه برنگشته ولی دفه دوم با موفقیت برمیگرده
         var isSuccess = resultCode is SuccessResultCode or AlreadySettledResultCode;
@@ -138,9 +142,12 @@ public class MellatGateway : IPaymentGateway
         PaymentTransaction transaction,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(transaction.GatewaySaleReferenceId))
+            return new GatewayOperationResult(false, "NO_SALE_REF", "شناسه مرجع فروش موجود نیست");
+
         var mellatOrderId = transaction.PaymentTransactionId.ToString();
         var resultCode = (await _soapClient.BpReversalRequestAsync(
-            mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId!, cancellationToken))?.Trim();
+            mellatOrderId, mellatOrderId, transaction.GatewaySaleReferenceId, cancellationToken))?.Trim();
 
         //---اگه دفه اول در ریورس نتیجه دریافت نشده باشه ولی ریورس انجام شده باشه دفعات بعدی کد 48 بجای 0 برمیگرده 
         var isSuccess = resultCode is SuccessResultCode or AlreadyReverseStatusCode;

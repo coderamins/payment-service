@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using PaymentService.Application.Abstractions;
 using PaymentService.Application.Common;
+using PaymentService.Application.Common.Exceptions;
 using PaymentService.Domain.Entities;
 using PaymentService.Domain.Enums;
 
@@ -68,7 +69,7 @@ public class MelliGateway : IPaymentGateway
             maskedCard,
             paid ? null : "پرداخت ناموفق بود یا توسط کاربر لغو شد",
             reportedAmount,
-            token
+            token ?? string.Empty
             );
     }
 
@@ -85,7 +86,8 @@ public class MelliGateway : IPaymentGateway
 
         var res = await _api.VerifyAsync(transaction.GatewayRefId, cancellationToken);
         if (res is null)
-            return new GatewayOperationResult(false, "NO_RESPONSE", "پاسخ نامعتبر از سداد");
+            throw new GatewayCommunicationException("پاسخ نامشخص از بانک دریافت شد .");
+            //return new GatewayOperationResult(false, "NO_RESPONSE", "پاسخ نامعتبر از سداد");
 
         if (res.ResCode is not (Success or AlreadyVerified))
             return new GatewayOperationResult(false, res.ResCode.ToString(),
@@ -100,7 +102,7 @@ public class MelliGateway : IPaymentGateway
             try { await _api.ReverseAsync(transaction.GatewayRefId, transaction.AmountInRials, cancellationToken); }
             catch (Exception ex) { _logger.LogError(ex, "Reverse بعد از مغایرت مبلغ ناموفق بود: {Id}", transaction.PaymentTransactionId); }
 
-            return new GatewayOperationResult(false, "AMOUNT_MISMATCH",
+            return new GatewayOperationResult(false, GatewayResultCodes.AmountMismatch,
                 "مبلغ پرداخت‌شده با مبلغ سفارش مغایرت دارد");
         }
 

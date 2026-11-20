@@ -77,21 +77,16 @@ public class AsanPardakhtGateway : IPaymentGateway
         if (tran is null || tran.PayGateTranId <= 0)
             return new GatewayOperationResult(false, "NOT_FOUND", "تراکنش موفقی نزد بانک برای این تراکنش یافت نشد .");
 
-        if(tran.Amount!=transaction.AmountInRials)
+        if (tran.Amount != transaction.AmountInRials)
         {
             _logger.LogCritical(
                 "مغایرت مبلغ در آسان‌پرداخت. تراکنش {Id} مبلغ ما {Ours} مبلغ بانک {Theirs}",
-                transaction.PaymentTransactionId,
-                transaction.AmountInRials,
-                tran.Amount);
+                transaction.PaymentTransactionId, transaction.AmountInRials, tran.Amount);
 
-            try
+            return new GatewayOperationResult(false, GatewayResultCodes.AmountMismatch, "مغایرت مبلغ با بانک")
             {
-                await _apiClient.ReverseAsync(tran.PayGateTranId, cancellationToken);
-            }
-            catch (Exception ex) { _logger.LogError(ex, "Reverse بعد از مغایرت مبلغ ناموفق بود ."); }
-
-            return new GatewayOperationResult(false, "AMOUNT_MISMATCH", "مغایرت مبلغ با بانک");
+                ReportedAmountInRials = tran.Amount
+            };
         }
 
         var response = await _apiClient.VerifyAsync(tran.PayGateTranId, cancellationToken);
@@ -100,10 +95,7 @@ public class AsanPardakhtGateway : IPaymentGateway
         if (code == 200 || code == 472)
             return new GatewayOperationResult(true, code.ToString(), null);
 
-        return new GatewayOperationResult(false, GatewayResultCodes.AmountMismatch, "مغایرت مبلغ با بانک")
-        {
-            ReportedAmountInRials = tran.Amount
-        };
+        return new GatewayOperationResult(false, code.ToString(), MapVerifyError(code));
     }
 
     public async Task<GatewayOperationResult> SettleAsync(
@@ -116,7 +108,7 @@ public class AsanPardakhtGateway : IPaymentGateway
         var response = await _apiClient.SettlementAsync(payGateTranId.Value, cancellationToken);
         var code = (int)response.StatusCode;
 
-        // 473 یعنی قبلاً تسویه شده 
+        // 474 یعنی قبلاً تسویه شده 
         if (code == 200 || code == 474 || code == 476)
             return new GatewayOperationResult(true, code.ToString(), null);
 

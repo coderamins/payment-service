@@ -66,7 +66,7 @@ public class PardakhtNovinGateway : IPaymentGateway
             null, 
             error, 
             reportedAmount,
-            token);
+            token ?? string.Empty);
     }
 
     /// <summary>Verify جداگانه ندارد؛ Confirm همان تسویه‌ی نهایی است (SettleAsync).</summary>

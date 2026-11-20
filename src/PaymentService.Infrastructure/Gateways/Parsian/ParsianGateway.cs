@@ -72,7 +72,7 @@ public class ParsianGateway : IPaymentGateway
                 ? "پرداخت توسط کاربر لغو شد"
                 : MapError(hasStatus ? status : -1, null)),
             reportedAmount,
-            token
+            token ?? string.Empty
             );
     }
 

@@ -40,10 +40,18 @@ public class IranKishGateway : IPaymentGateway
         var rrn = GetParameter(rawParameters, "retrievalReferenceNumber");
         var stan = GetParameter(rawParameters, "systemTraceAuditNumber");
         var success = !string.IsNullOrWhiteSpace(token) && !string.IsNullOrWhiteSpace(rrn) && !string.IsNullOrWhiteSpace(stan);
+
         // The shared callback contract has one reference field; preserve the three confirmation inputs in it.
         var reference = success ? JsonSerializer.Serialize(new CallbackReference(token!, rrn!, stan!)) : null;
-        return new GatewayCallbackParseResult(success, success ? "0" : "unknown", reference, null,
-            success ? null : "اطلاعات بازگشتی ایران‌کیش ناقص است");
+        return new GatewayCallbackParseResult(
+            success, 
+            success ? "0" : "unknown", 
+            reference, 
+            null,
+            success ? null : "اطلاعات بازگشتی ایران‌کیش ناقص است",
+            null,
+            token ?? string.Empty
+            );
     }
 
     // Purchase confirmation is the final operation and is performed in SettleAsync.
