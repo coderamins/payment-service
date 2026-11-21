@@ -1,3 +1,4 @@
+using PaymentService.Infrastructure.Gateways.Helpers;
 ﻿using Azure;
 using Microsoft.Extensions.Logging;
 using PaymentService.Application.Abstractions;
@@ -67,28 +68,29 @@ public class SamanGateway : IPaymentGateway
             ▪ SecurePan : شماره کارتی که تراکنش با آن انجام شده است
             ▪ HashedCardNumber : شماره کارت هش شده SHA256
         */
-        var state = GetParameter(rawParameters, "State");
-        var statusText = GetParameter(rawParameters, "Status");
-        var rrnText = GetParameter(rawParameters, "RRN");
-        var refNum = GetParameter(rawParameters, "RefNum");
-        var securePan = GetParameter(rawParameters, "SecurePan");
-        var amountRaw = GetParameter(rawParameters, "Amount");
+        var state = GatewayParameterHelper.GetParameter(rawParameters, "State");
+        var statusText = GatewayParameterHelper.GetParameter(rawParameters, "Status");
+        var rrnText = GatewayParameterHelper.GetParameter(rawParameters, "RRN");
+        var refNum = GatewayParameterHelper.GetParameter(rawParameters, "RefNum");
+        var securePan = GatewayParameterHelper.GetParameter(rawParameters, "SecurePan");
+        var amountRaw = GatewayParameterHelper.GetParameter(rawParameters, "Amount");
 
         long? reportedAmount = long.TryParse(amountRaw, out var amount) ? amount : null;
 
-        if (!int.TryParse(statusText, out var iStatusCode)) iStatusCode = -999;
+        var isSuccess = string.Equals(state, "OK", StringComparison.OrdinalIgnoreCase)
+                && statusText == "2";
 
-        var isSuccess = (iStatusCode == 2);
+        int.TryParse(statusText, out var statusCode);
+        var cleanRefNum = string.IsNullOrWhiteSpace(refNum) ? null : refNum.Trim();
 
         return new GatewayCallbackParseResult(
             isSuccess,
             statusText ?? "unknown",
-            SaleReferenceId: isSuccess ? refNum : null,
+            SaleReferenceId: isSuccess ? cleanRefNum : null,
             MaskedCardNumber: securePan,
-            isSuccess ? null : MapCallbackError(iStatusCode),
+            isSuccess ? null : MapCallbackError(statusCode),
             reportedAmount,
-            null
-            );
+            null);
     }
 
     /// <summary>سامان Verify اولیه ندارد؛ Verify اصلی همان اقدام نهایی است و در SettleAsync انجام می‌شود.</summary>
@@ -99,34 +101,51 @@ public class SamanGateway : IPaymentGateway
     public async Task<GatewayOperationResult> SettleAsync(
         PaymentTransaction transaction, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(transaction.GatewaySaleReferenceId))
+        var refNum = transaction.GatewaySaleReferenceId;
+        if (string.IsNullOrWhiteSpace(refNum))
             return new GatewayOperationResult(false, "NO_SALE_REF", "شناسه مرجع سامان موجود نیست");
 
-        var response = await _apiClient.ConfirmAsync(
-            transaction.GatewaySaleReferenceId, _options.TerminalId, cancellationToken);
-
-        if (response.ResultCode != 0)
-            return new GatewayOperationResult(false, response.ResultCode.ToString(),
-                MapResultCodeMessage(response.ResultCode));
-
-        var detail = response.TransactionDetail;
-        if (detail is null || detail.OrginalAmount != transaction.AmountInRials)
+        // همین RefNum نباید به تراکنش دیگری هم نسبت داده شده باشد (جلوگیری از Replay)
+        if (await _repository.ExistsOtherWithSaleReferenceAsync(
+                Provider, refNum, transaction.PaymentTransactionId, cancellationToken))
         {
-            _logger.LogCritical("مغایرت مبلغ سامان. تراکنش {Id} ما {Ours} بانک {Theirs}",
+            _logger.LogCritical("RefNum سامان برای چند تراکنش تکرار شده. تراکنش {Id}", transaction.PaymentTransactionId);
+            return new GatewayOperationResult(false, "REPLAY", "شناسه مرجع پرداخت تکراری است");
+        }
+
+        var response = await _apiClient.ConfirmAsync(refNum, _options.TerminalId, cancellationToken);
+        var detail = response.TransactionDetail;
+
+        // 0 موفق؛ 2 «درخواست تکراری» فقط وقتی پذیرفته می‌شود که جزئیات بانک در دسترس باشد و پایین چک شود
+        var ok = response.ResultCode == 0 || (response.ResultCode == 2 && detail is not null);
+        if (!ok)
+            return new GatewayOperationResult(
+                false, response.ResultCode.ToString(), MapResultCodeMessage(response.ResultCode));
+
+        if (detail is null
+            || detail.OrginalAmount != transaction.AmountInRials
+            || (!string.IsNullOrEmpty(detail.RefNum) && detail.RefNum != refNum))
+        {
+            _logger.LogCritical(
+                "مغایرت اطلاعات تأیید سامان. تراکنش {Id} مبلغ ما {Ours} مبلغ بانک {Theirs}",
                 transaction.PaymentTransactionId, transaction.AmountInRials, detail?.OrginalAmount);
-            try { await _apiClient.ReversalAsync(transaction.GatewaySaleReferenceId, _options.TerminalId, cancellationToken); }
-            catch (Exception ex) { _logger.LogError(ex, "Reverse بعد از مغایرت ناموفق بود"); }
+
+            // در سامان Verify همین مرحله‌ی نهایی است، پس Reverse همین‌جا درست است
+            try { await _apiClient.ReversalAsync(refNum, _options.TerminalId, cancellationToken); }
+            catch (Exception ex) { _logger.LogError(ex, "Reverse بعد از مغایرت ناموفق بود: {Id}", transaction.PaymentTransactionId); }
+
             return new GatewayOperationResult(false, GatewayResultCodes.AmountMismatch, "مغایرت مبلغ با بانک");
         }
 
-        return new GatewayOperationResult(true, "0", null, detail.MaskedPan);
+        return new GatewayOperationResult(true, response.ResultCode.ToString(), null, detail.MaskedPan);
     }
+
 
     public async Task<GatewayOperationResult> ReverseAsync(
         PaymentTransaction transaction, CancellationToken cancellationToken = default)
     {
-        if (!long.TryParse(transaction.GatewayRefId, out var token))
-            return new GatewayOperationResult(false, null, "توکن سامان برای این تراکنش در دسترس نیست");
+        if (string.IsNullOrWhiteSpace(transaction.GatewaySaleReferenceId))
+            return new GatewayOperationResult(false, "NO_SALE_REF", "شناسه مرجع سامان موجود نیست");
 
         var response = await _apiClient.ReversalAsync(
             transaction.GatewaySaleReferenceId, _options.TerminalId, cancellationToken);
@@ -134,16 +153,8 @@ public class SamanGateway : IPaymentGateway
         var ok = response.ResultCode == 0;
         return new GatewayOperationResult(
             ok, response.ResultCode.ToString(),
-            response.ResultDescription,
+            ok ? null : MapResultCodeMessage(response.ResultCode),
             response.TransactionDetail?.MaskedPan);
-    }
-
-    private static string? GetParameter(IDictionary<string, string> parameters, string name)
-    {
-        foreach (var (key, value) in parameters)
-            if (string.Equals(key, name, StringComparison.OrdinalIgnoreCase))
-                return value;
-        return null;
     }
 
     private static string MapCallbackError(int statusCode) => statusCode switch

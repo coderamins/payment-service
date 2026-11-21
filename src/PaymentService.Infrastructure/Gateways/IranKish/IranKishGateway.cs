@@ -1,3 +1,4 @@
+using PaymentService.Infrastructure.Gateways.Helpers;
 ﻿using Microsoft.Extensions.Logging;
 using PaymentService.Application.Abstractions;
 using PaymentService.Domain.Entities;
@@ -36,9 +37,11 @@ public class IranKishGateway : IPaymentGateway
 
     public GatewayCallbackParseResult ParseCallback(IDictionary<string, string> rawParameters)
     {
-        var token = GetParameter(rawParameters, "token") ?? GetParameter(rawParameters, "tokenIdentity");
-        var rrn = GetParameter(rawParameters, "retrievalReferenceNumber");
-        var stan = GetParameter(rawParameters, "systemTraceAuditNumber");
+        var token = GatewayParameterHelper.GetParameter(rawParameters, "token") ??
+            GatewayParameterHelper.GetParameter(rawParameters, "tokenIdentity");
+
+        var rrn = GatewayParameterHelper.GetParameter(rawParameters, "retrievalReferenceNumber");
+        var stan = GatewayParameterHelper.GetParameter(rawParameters, "systemTraceAuditNumber");
         var success = !string.IsNullOrWhiteSpace(token) && !string.IsNullOrWhiteSpace(rrn) && !string.IsNullOrWhiteSpace(stan);
 
         // The shared callback contract has one reference field; preserve the three confirmation inputs in it.
@@ -75,13 +78,6 @@ public class IranKishGateway : IPaymentGateway
 
     public Task<GatewayOperationResult> ReverseAsync(PaymentTransaction transaction, CancellationToken cancellationToken = default)
         => Task.FromResult(new GatewayOperationResult(false, null, "عملیات برگشت وجه ایران‌کیش در نمونه ارائه‌شده پشتیبانی نشده است"));
-
-    private static string? GetParameter(IDictionary<string, string> parameters, string name)
-    {
-        foreach (var pair in parameters)
-            if (string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase)) return pair.Value;
-        return null;
-    }
 
     private record CallbackReference(string Token, string Rrn, string Stan);
 }

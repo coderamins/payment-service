@@ -58,7 +58,7 @@ public class AsanPardakhtGateway : IPaymentGateway
 
     public GatewayCallbackParseResult ParseCallback(IDictionary<string, string> rawParameters)
     {
-        var hint = GetParameter(rawParameters, "PayGateTranID");
+        var hint = GatewayParameterHelper.GetParameter(rawParameters, "PayGateTranID");
         var looksPaid = hint is { Length: > 0 and <= 18 } && long.TryParse(hint, out var id) && id > 0;
 
         return new GatewayCallbackParseResult(
@@ -201,17 +201,6 @@ public class AsanPardakhtGateway : IPaymentGateway
             encryptionIvBase64: _shaparakOptions.EncryptionIV);
 
         return $"{{'EncryptedNationalId':'{encryptedNationalId}'}}";
-    }
-
-    private static string? GetParameter(IDictionary<string, string> parameters, string name)
-    {
-        foreach (var (key, value) in parameters)
-        {
-            if (string.Equals(key, name, StringComparison.OrdinalIgnoreCase))
-                return value;
-        }
-
-        return null;
     }
 
 }

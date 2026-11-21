@@ -77,4 +77,10 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
         }
     }
 
+    public Task<bool> ExistsOtherWithSaleReferenceAsync(
+    GatewayProvider provider, string saleReferenceId, long excludeTransactionId, CancellationToken ct)
+    => _context.PaymentTransaction.AnyAsync(t =>
+           t.GatewayProviderId == provider &&
+           t.GatewaySaleReferenceId == saleReferenceId &&
+           t.PaymentTransactionId != excludeTransactionId, ct);
 }

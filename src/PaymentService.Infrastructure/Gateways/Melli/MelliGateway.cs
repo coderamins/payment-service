@@ -87,7 +87,6 @@ public class MelliGateway : IPaymentGateway
         var res = await _api.VerifyAsync(transaction.GatewayRefId, cancellationToken);
         if (res is null)
             throw new GatewayCommunicationException("پاسخ نامشخص از بانک دریافت شد .");
-            //return new GatewayOperationResult(false, "NO_RESPONSE", "پاسخ نامعتبر از سداد");
 
         if (res.ResCode is not (Success or AlreadyVerified))
             return new GatewayOperationResult(false, res.ResCode.ToString(),

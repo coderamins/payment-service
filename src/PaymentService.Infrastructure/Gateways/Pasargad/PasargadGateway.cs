@@ -1,3 +1,4 @@
+using PaymentService.Infrastructure.Gateways.Helpers;
 ﻿using Microsoft.Extensions.Logging;
 using PaymentService.Application.Abstractions;
 using PaymentService.Domain.Entities;
@@ -61,9 +62,9 @@ public class PasargadGateway : IPaymentGateway
     /// callback با GET: invoiceId، status (success/failed/unknown/cancel/expire)، referenceNumber، trackId
     public GatewayCallbackParseResult ParseCallback(IDictionary<string, string> rawParameters)
     {
-        var status = GetParameter(rawParameters, "status")?.Trim().ToLowerInvariant();
-        var referenceNumber = GetParameter(rawParameters, "referenceNumber");
-        var trackId = GetParameter(rawParameters, "trackId");
+        var status = GatewayParameterHelper.GetParameter(rawParameters, "status")?.Trim().ToLowerInvariant();
+        var referenceNumber = GatewayParameterHelper.GetParameter(rawParameters, "referenceNumber");
+        var trackId = GatewayParameterHelper.GetParameter(rawParameters, "trackId");
 
         // فقط status ملاک است؛ صحت نهایی را Verify نزد بانک تعیین می‌کند
         var isSuccess = status == "success";
@@ -148,14 +149,6 @@ public class PasargadGateway : IPaymentGateway
 
     private static string Invoice(PaymentTransaction t)
         => t.PaymentTransactionId.ToString(CultureInfo.InvariantCulture);
-
-    private static string? GetParameter(IDictionary<string, string> parameters, string name)
-    {
-        foreach (var (key, value) in parameters)
-            if (string.Equals(key, name, StringComparison.OrdinalIgnoreCase))
-                return value;
-        return null;
-    }
 
     private static string? NullIfEmpty(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

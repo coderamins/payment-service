@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using PaymentService.Application.Abstractions;
+using PaymentService.Application.Common.Exceptions;
 using PaymentService.Domain.Entities;
 using PaymentService.Domain.Enums;
 
@@ -82,7 +83,7 @@ public class PardakhtNovinGateway : IPaymentGateway
 
         var res = await _api.ConfirmAsync(transaction.GatewayRefId, cancellationToken);
         if (res is null)
-            return new GatewayOperationResult(false, "NO_RESPONSE", "پاسخ نامعتبر از پرداخت نوین");
+            throw new GatewayCommunicationException("پاسخ نامعتبر از پرداخت نوین");
 
         return res.Status is Success or AlreadyConfirmed
             ? new GatewayOperationResult(true, res.Status.ToString(), null)

@@ -38,5 +38,7 @@ public interface IPaymentTransactionRepository
     Task SaveChangesAsync(
         CancellationToken cancellationToken = default);
 
+    Task<bool> ExistsOtherWithSaleReferenceAsync(
+    GatewayProvider provider, string saleReferenceId, long excludeTransactionId, CancellationToken ct);
 
 }

@@ -1,3 +1,4 @@
+using PaymentService.Infrastructure.Gateways.Helpers;
 ﻿using global::PaymentService.Application.Abstractions;
 using global::PaymentService.Domain.Entities;
 using global::PaymentService.Domain.Enums;
@@ -7,6 +8,8 @@ namespace PaymentService.Infrastructure.Gateways.Parsian;
 
 public class ParsianGateway : IPaymentGateway
 {
+    private const short AlreadySettled = -1532;
+
     private readonly ParsianApiClient _apiClient;
     private readonly ParsianOptions _options;
     private readonly ILogger<ParsianGateway> _logger;
@@ -50,9 +53,9 @@ public class ParsianGateway : IPaymentGateway
 
     public GatewayCallbackParseResult ParseCallback(IDictionary<string, string> rawParameters)
     {
-        var statusText = GetParameter(rawParameters, "status");
-        var rrnText = GetParameter(rawParameters, "RRN");
-        var token = GetParameter(rawParameters, "Token");
+        var statusText = GatewayParameterHelper.GetParameter(rawParameters, "status");
+        var rrnText = GatewayParameterHelper.GetParameter(rawParameters, "RRN");
+        var token = GatewayParameterHelper.GetParameter(rawParameters, "Token");
 
         rawParameters.TryGetValue("Amount", out var amountRaw);
 
@@ -91,7 +94,8 @@ public class ParsianGateway : IPaymentGateway
         var response = await _apiClient.ConfirmAsync(
             token, transaction.PaymentTransactionId, transaction.AmountInRials, cancellationToken);
 
-        var ok = response.Status == 0;
+        var ok = response.Status is 0 or AlreadySettled;
+
         return new GatewayOperationResult(
             ok, response.Status.ToString(),
             ok ? null : MapError(response.Status, null),
@@ -110,14 +114,6 @@ public class ParsianGateway : IPaymentGateway
         var ok = response.Status is 0 or -102 or -1551;
         return new GatewayOperationResult(
             ok, response.Status.ToString(), ok ? null : MapError(response.Status, response.Message));
-    }
-
-    private static string? GetParameter(IDictionary<string, string> parameters, string name)
-    {
-        foreach (var (key, value) in parameters)
-            if (string.Equals(key, name, StringComparison.OrdinalIgnoreCase))
-                return value;
-        return null;
     }
 
     private static string MapError(int code, string? bankMessage) => code switch
